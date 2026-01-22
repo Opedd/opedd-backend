@@ -11,7 +11,12 @@ export function getSupabaseClient(): SupabaseClient {
       throw new Error('Missing Supabase configuration');
     }
 
-    supabase = createClient(url, key);
+    supabase = createClient(url, key, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
   }
   return supabase;
 }
