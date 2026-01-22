@@ -45,18 +45,6 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// Debug endpoint (temporary)
-app.get('/debug/env', (_req, res) => {
-  res.json({
-    hasSupabaseUrl: !!process.env.SUPABASE_URL,
-    hasAnonKey: !!process.env.SUPABASE_ANON_KEY,
-    hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    supabaseUrlPrefix: process.env.SUPABASE_URL?.substring(0, 20) || 'missing',
-    nodeEnv: process.env.NODE_ENV,
-    vercel: !!process.env.VERCEL,
-  });
-});
-
 // API routes
 app.use('/api/v1', routes);
 
