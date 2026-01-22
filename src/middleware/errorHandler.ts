@@ -50,10 +50,7 @@ export function errorHandler(
     success: false,
     error: {
       code: 'INTERNAL_ERROR',
-      message:
-        process.env.NODE_ENV === 'production'
-          ? 'Internal server error'
-          : err.message,
+      message: err.message,
     },
   });
 }
