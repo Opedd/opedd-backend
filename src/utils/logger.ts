@@ -11,15 +11,9 @@ export const logger = winston.createLogger({
   ),
   defaultMeta: { service: 'opedd-api' },
   transports: [
-    new winston.transports.Console(),
-  ],
-});
+    new winston.transports.Console()  // Always console (Vercel-safe)
+  ]
+  // File transports DISABLED for serverless (read-only FS)
+  // if (process.env.NODE_ENV === 'production') {
+  //   logger.add(new winston.transports.File({ filename: 'logs/error.log
 
-if (process.env.NODE_ENV === 'production') {
-  logger.add(
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' })
-  );
-  logger.add(
-    new winston.transports.File({ filename: 'logs/combined.log' })
-  );
-}
