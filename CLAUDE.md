@@ -74,6 +74,6 @@ RLS policies ensure users can only access their own data.
 ## Environment Variables
 
 Copy `.env.example` to `.env`:
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` - Required for Supabase
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` - Required for Supabase
 - `PORT` - Server port (default 3000)
 - `CORS_ORIGIN` - Allowed CORS origin
