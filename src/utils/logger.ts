@@ -38,7 +38,7 @@ if (!isProduction) {
       })
     );
   } catch (err) {
-    console.warn('Local file logging failed to initialize:', err.message);
+    console.warn('Local file logging failed to initialize:', err instanceof Error ? err.message : err);
   }
 }
 
