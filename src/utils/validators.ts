@@ -24,6 +24,11 @@ export const createLicenseSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
+export const createPublisherSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CreateLicenseInput = z.infer<typeof createLicenseSchema>;
+export type CreatePublisherInput = z.infer<typeof createPublisherSchema>;

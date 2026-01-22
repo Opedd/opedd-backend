@@ -2,12 +2,37 @@ import { Publisher } from '../entities/Publisher';
 import { getSupabaseClient, getSupabaseClientForUser } from './supabase';
 import { NotFoundError } from '../utils/errors';
 
+export interface CreatePublisherData {
+  userId: string;
+  name: string;
+}
+
 export interface IPublisherRepo {
+  create(data: CreatePublisherData): Promise<Publisher>;
   findByUserId(userId: string): Promise<Publisher | null>;
   findById(id: string): Promise<Publisher | null>;
 }
 
 export class SupabasePublisherRepo implements IPublisherRepo {
+  async create(data: CreatePublisherData): Promise<Publisher> {
+    const supabase = getSupabaseClient();
+
+    const { data: publisher, error } = await supabase
+      .from('publishers')
+      .insert({
+        user_id: data.userId,
+        name: data.name,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create publisher: ${error.message}`);
+    }
+
+    return this.mapToPublisher(publisher);
+  }
+
   async findByUserId(userId: string): Promise<Publisher | null> {
     const supabase = getSupabaseClient();
 
