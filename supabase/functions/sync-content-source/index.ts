@@ -8,6 +8,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Chrome-like User-Agent for sites that block bots
+const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 interface RSSItem {
   title: string;
   link: string;
@@ -85,7 +88,23 @@ function parseRSSFeed(xml: string): RSSItem[] {
   return items;
 }
 
+// Determine if URL needs browser User-Agent (Substack, Medium, etc.)
+function needsBrowserUserAgent(url: string): boolean {
+  const browserAgentDomains = [
+    "substack.com",
+    "medium.com",
+    "ghost.io",
+    "opedd.com",
+  ];
+  return browserAgentDomains.some((domain) => url.includes(domain));
+}
+
 serve(async (req) => {
+  // Log every request at the very start
+  console.log("[sync] ====== SYNC FUNCTION INVOKED ======");
+  console.log("[sync] Method:", req.method);
+  console.log("[sync] Time:", new Date().toISOString());
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -94,6 +113,7 @@ serve(async (req) => {
     // Get auth token
     const authHeader = req.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("[sync] ERROR: No authorization token provided");
       return new Response(
         JSON.stringify({
           success: false,
@@ -113,6 +133,7 @@ serve(async (req) => {
     // Verify user
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
+      console.log("[sync] ERROR: Invalid or expired token");
       return new Response(
         JSON.stringify({
           success: false,
@@ -125,10 +146,12 @@ serve(async (req) => {
     console.log("[sync] User authenticated:", user.id);
 
     // Parse request body
-    let body;
+    let body: { source_id?: string; sourceUrl?: string };
     try {
       body = await req.json();
+      console.log("[sync] Request body:", JSON.stringify(body));
     } catch {
+      console.log("[sync] ERROR: Invalid JSON in request body");
       return new Response(
         JSON.stringify({
           success: false,
@@ -138,43 +161,21 @@ serve(async (req) => {
       );
     }
 
-    const { source_id } = body;
+    const { source_id, sourceUrl } = body;
 
-    if (!source_id) {
+    // Validate: need either source_id or sourceUrl
+    if (!source_id && !sourceUrl) {
+      console.log("[sync] ERROR: Missing source_id or sourceUrl");
       return new Response(
         JSON.stringify({
           success: false,
-          error: { code: "MISSING_SOURCE_ID", message: "source_id is required" },
+          error: { code: "MISSING_PARAMS", message: "Either source_id or sourceUrl is required" },
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log("[sync] Syncing source:", source_id);
-
-    // 1. Fetch content source
-    const { data: source, error: sourceError } = await supabase
-      .from("content_sources")
-      .select("id, user_id, source_type, url, name")
-      .eq("id", source_id)
-      .eq("user_id", user.id)
-      .single();
-
-    if (sourceError || !source) {
-      console.error("[sync] Source not found:", sourceError?.message);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: { code: "SOURCE_NOT_FOUND", message: "Content source not found or access denied" },
-        }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const contentSource = source as ContentSource;
-    console.log("[sync] Found source:", contentSource.url);
-
-    // 2. Fetch publisher for this user
+    // 1. Fetch publisher for this user (needed for both paths)
     const { data: publisher, error: publisherError } = await supabase
       .from("publishers")
       .select("id")
@@ -182,11 +183,11 @@ serve(async (req) => {
       .single();
 
     if (publisherError || !publisher) {
-      console.error("[sync] Publisher not found:", publisherError?.message);
+      console.error("[sync] ERROR: Publisher not found:", publisherError?.message);
       return new Response(
         JSON.stringify({
           success: false,
-          error: { code: "NO_PUBLISHER", message: "Publisher profile not found" },
+          error: { code: "NO_PUBLISHER", message: "Publisher profile not found. Please create a publisher first." },
         }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -194,6 +195,80 @@ serve(async (req) => {
 
     const publisherData = publisher as Publisher;
     console.log("[sync] Publisher ID:", publisherData.id);
+
+    // 2. Determine the feed URL to fetch
+    let feedUrl: string;
+    let contentSource: ContentSource | null = null;
+
+    if (source_id) {
+      // Fetch from existing content_source record
+      console.log("[sync] Looking up source_id:", source_id);
+
+      const { data: source, error: sourceError } = await supabase
+        .from("content_sources")
+        .select("id, user_id, source_type, url, name")
+        .eq("id", source_id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (sourceError || !source) {
+        console.error("[sync] ERROR: Source not found:", sourceError?.message);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: "SOURCE_NOT_FOUND", message: "Content source not found or access denied" },
+          }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      contentSource = source as ContentSource;
+      feedUrl = contentSource.url;
+    } else {
+      // Use sourceUrl directly (ad-hoc sync)
+      feedUrl = sourceUrl!;
+
+      // Optionally create/find content_source record
+      console.log("[sync] Using direct sourceUrl:", feedUrl);
+
+      // Check if this URL already exists as a content source
+      const { data: existingSource } = await supabase
+        .from("content_sources")
+        .select("id, user_id, source_type, url, name")
+        .eq("user_id", user.id)
+        .eq("url", feedUrl)
+        .single();
+
+      if (existingSource) {
+        contentSource = existingSource as ContentSource;
+        console.log("[sync] Found existing content_source:", contentSource.id);
+      } else {
+        // Create a new content_source record
+        console.log("[sync] Creating new content_source for URL:", feedUrl);
+
+        const { data: newSource, error: createError } = await supabase
+          .from("content_sources")
+          .insert({
+            user_id: user.id,
+            source_type: "rss",
+            url: feedUrl,
+            name: new URL(feedUrl).hostname,
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.error("[sync] ERROR: Failed to create content_source:", createError.message);
+          // Continue without content_source - we can still import
+        } else {
+          contentSource = newSource as ContentSource;
+          console.log("[sync] Created content_source:", contentSource.id);
+        }
+      }
+    }
+
+    // ===== FETCH THE FEED =====
+    console.log("Fetching URL:", feedUrl);
 
     // 3. Fetch publisher settings (or use defaults)
     const { data: settings } = await supabase
@@ -208,48 +283,74 @@ serve(async (req) => {
       auto_mint_enabled: false,
     };
 
-    console.log("[sync] Publisher settings:", publisherSettings);
+    console.log("[sync] Publisher settings:", JSON.stringify(publisherSettings));
 
-    // 4. Fetch the RSS feed
+    // 4. Fetch the RSS feed with appropriate User-Agent
     let feedXml: string;
     try {
-      const feedResponse = await fetch(contentSource.url, {
+      const userAgent = needsBrowserUserAgent(feedUrl) ? BROWSER_USER_AGENT : "Opedd RSS Sync/1.0";
+      console.log("[sync] Using User-Agent:", userAgent.substring(0, 50) + "...");
+
+      const feedResponse = await fetch(feedUrl, {
         headers: {
-          "User-Agent": "Opedd RSS Sync/1.0",
-          "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml",
+          "User-Agent": userAgent,
+          "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*",
         },
       });
 
+      console.log("[sync] Feed response status:", feedResponse.status);
+
       if (!feedResponse.ok) {
-        throw new Error(`HTTP ${feedResponse.status}: ${feedResponse.statusText}`);
+        const errorText = await feedResponse.text().catch(() => "");
+        console.error("[sync] ERROR: Feed fetch failed:", feedResponse.status, errorText.substring(0, 200));
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "FETCH_ERROR",
+              message: `Failed to fetch feed: HTTP ${feedResponse.status} ${feedResponse.statusText}`,
+              url: feedUrl,
+            },
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       feedXml = await feedResponse.text();
-      console.log("[sync] Fetched feed, length:", feedXml.length);
+      console.log("[sync] Fetched feed, length:", feedXml.length, "bytes");
+      console.log("[sync] Feed preview:", feedXml.substring(0, 200));
     } catch (fetchError) {
-      console.error("[sync] Failed to fetch feed:", fetchError);
+      const errorMessage = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
+      console.error("[sync] ERROR: Exception fetching feed:", errorMessage);
       return new Response(
         JSON.stringify({
           success: false,
-          error: { code: "FETCH_ERROR", message: `Failed to fetch feed: ${fetchError.message}` },
+          error: {
+            code: "FETCH_ERROR",
+            message: `Failed to fetch feed: ${errorMessage}`,
+            url: feedUrl,
+          },
         }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // 5. Parse the feed
     const feedItems = parseRSSFeed(feedXml);
+    console.log("[sync] Items parsed from feed:", feedItems.length);
 
     if (feedItems.length === 0) {
+      console.log("[sync] WARNING: No items found in feed");
       return new Response(
         JSON.stringify({
           success: true,
           data: {
-            source_id: contentSource.id,
+            source_id: contentSource?.id || null,
+            source_url: feedUrl,
             items_found: 0,
             items_imported: 0,
             items_skipped: 0,
-            message: "No items found in feed",
+            message: "No items found in feed. The feed may be empty or in an unsupported format.",
           },
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -273,6 +374,7 @@ serve(async (req) => {
     // 8. Insert new licenses
     let importedCount = 0;
     const errors: string[] = [];
+    const importedTitles: string[] = [];
 
     for (const item of newItems) {
       try {
@@ -282,12 +384,12 @@ serve(async (req) => {
           description: item.description,
           license_type: "standard",
           source_url: item.link,
-          source_id: contentSource.id,
+          source_id: contentSource?.id || null,
           metadata: {
             human_price: publisherSettings.default_human_price,
             ai_price: publisherSettings.default_ai_price,
             pub_date: item.pubDate,
-            source_name: contentSource.name || contentSource.url,
+            source_name: contentSource?.name || new URL(feedUrl).hostname,
             auto_imported: true,
           },
         });
@@ -297,36 +399,45 @@ serve(async (req) => {
           if (!insertError.message.includes("duplicate")) {
             console.error("[sync] Insert error for", item.link, ":", insertError.message);
             errors.push(`${item.title}: ${insertError.message}`);
+          } else {
+            console.log("[sync] Skipped duplicate:", item.title);
           }
         } else {
           importedCount++;
+          importedTitles.push(item.title);
           console.log("[sync] Imported:", item.title);
         }
       } catch (err) {
-        console.error("[sync] Unexpected error:", err);
-        errors.push(`${item.title}: Unexpected error`);
+        const errMsg = err instanceof Error ? err.message : "Unexpected error";
+        console.error("[sync] Unexpected error importing item:", errMsg);
+        errors.push(`${item.title}: ${errMsg}`);
       }
     }
 
-    // 9. Update last_sync_at
-    await supabase
-      .from("content_sources")
-      .update({ last_sync_at: new Date().toISOString() })
-      .eq("id", contentSource.id);
+    // 9. Update last_sync_at if we have a content_source
+    if (contentSource?.id) {
+      await supabase
+        .from("content_sources")
+        .update({ last_sync_at: new Date().toISOString() })
+        .eq("id", contentSource.id);
+      console.log("[sync] Updated last_sync_at for source:", contentSource.id);
+    }
 
-    console.log("[sync] Sync complete. Imported:", importedCount);
+    console.log("[sync] ====== SYNC COMPLETE ======");
+    console.log("[sync] Summary - Found:", feedItems.length, "| Imported:", importedCount, "| Skipped:", feedItems.length - newItems.length, "| Errors:", errors.length);
 
     return new Response(
       JSON.stringify({
         success: true,
         data: {
-          source_id: contentSource.id,
-          source_url: contentSource.url,
+          source_id: contentSource?.id || null,
+          source_url: feedUrl,
           items_found: feedItems.length,
           items_imported: importedCount,
           items_skipped: feedItems.length - newItems.length,
           items_failed: errors.length,
-          errors: errors.length > 0 ? errors : undefined,
+          imported_titles: importedTitles.slice(0, 5),
+          errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
         },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -334,13 +445,14 @@ serve(async (req) => {
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("[sync] Unexpected error:", errorMessage);
+    console.error("[sync] ====== FATAL ERROR ======");
+    console.error("[sync] Error:", errorMessage);
     return new Response(
       JSON.stringify({
         success: false,
         error: { code: "SERVER_ERROR", message: errorMessage },
       }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
