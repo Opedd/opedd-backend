@@ -1,34 +1,23 @@
 import { z } from 'zod';
 
-export const signupSchema = z.object({
-  email: z.string().email('Invalid email format'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
-  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
+// Publication Source Rules
+export const publicationSchema = z.object({
+  name: z.string().min(1),
+  url: z.string().url(),
+  platform: z.enum(['substack', 'beehiiv', 'ghost', 'wordpress', 'other']),
+  verification_status: z.enum(['pending', 'verified', 'failed']).default('pending'),
+  verification_token: z.string(), // The code for their bio
 });
 
-export const loginSchema = z.object({
-  email: z.string().email('Invalid email format'),
-  password: z.string().min(1, 'Password is required'),
+// Asset Rules
+export const assetSchema = z.object({
+  title: z.string().min(1),
+  format: z.enum(['single_article', 'publication_post']),
+  source_url: z.string().url().optional().nullable(),
+  human_price: z.number().min(0),
+  ai_price: z.number().min(0).optional().nullable(), // AI Price is now Optional
+  content_preview_url: z.string().optional(),
 });
 
-export const createLicenseSchema = z.object({
-  title: z.string().min(1, 'Title is required').max(200, 'Title too long'),
-  description: z.string().max(2000, 'Description too long').default(''),
-  licenseType: z.enum(['standard', 'exclusive', 'creative_commons']),
-  contentHash: z.string().nullable().optional(),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-});
-
-export const createPublisherSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
-});
-
-export type SignupInput = z.infer<typeof signupSchema>;
-export type LoginInput = z.infer<typeof loginSchema>;
-export type CreateLicenseInput = z.infer<typeof createLicenseSchema>;
-export type CreatePublisherInput = z.infer<typeof createPublisherSchema>;
+export type PublicationInput = z.infer<typeof publicationSchema>;
+export type AssetInput = z.infer<typeof assetSchema>;
