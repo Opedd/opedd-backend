@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// Publication Source Rules
-export const publicationSchema = z.object({
+// Content Source Rules
+export const contentSourceSchema = z.object({
   name: z.string().min(1),
   url: z.string().url(),
   platform: z.enum(['substack', 'beehiiv', 'ghost', 'wordpress', 'other']),
@@ -17,7 +17,7 @@ export const assetSchema = z.object({
   human_price: z.number().min(0),
   ai_price: z.number().min(0).optional().nullable(), // AI Price is now Optional
   content_preview_url: z.string().optional(),
-  publication_id: z.string().uuid().optional().nullable(),
+  source_id: z.string().uuid().optional().nullable(),
 });
 
 // Auth Rules
@@ -50,12 +50,12 @@ export const createPublisherSchema = z.object({
 
 // Transaction Rules
 export const createTransactionSchema = z.object({
-  asset_id: z.string().uuid(),
+  license_id: z.string().uuid(),
   amount: z.number(),
   currency: z.string(),
 });
 
-export type PublicationInput = z.infer<typeof publicationSchema>;
+export type ContentSourceInput = z.infer<typeof contentSourceSchema>;
 export type AssetInput = z.infer<typeof assetSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
