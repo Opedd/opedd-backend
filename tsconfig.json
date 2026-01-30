@@ -20,7 +20,8 @@
       "@controllers/*": ["controllers/*"],
       "@repos/*": ["repos/*"],
       "@utils/*": ["utils/*"],
-      "@middleware/*": ["middleware/*"]
+      "@middleware/*": ["middleware/*"],
+      "@services/*": ["services/*"]
     }
   },
   "include": ["src/**/*"],
