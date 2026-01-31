@@ -15,7 +15,7 @@ serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    const path = url.searchParams.get("path") || "";
+    const path = (url.searchParams.get("path") || "").replace(/^\/+/, "");
     const targetUrl = `${BACKEND_URL}/api/v1/${path}`;
 
     console.log(`[api-proxy] ${req.method} ${targetUrl}`);
