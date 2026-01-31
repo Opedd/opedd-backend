@@ -139,6 +139,12 @@ BEGIN
     COALESCE(NEW.sync_status, 'pending'),
     COALESCE(NEW.article_count, 0)
   )
+  ON CONFLICT (user_id, url) DO UPDATE SET
+    name         = EXCLUDED.name,
+    source_type  = EXCLUDED.source_type,
+    sync_status  = EXCLUDED.sync_status,
+    article_count = EXCLUDED.article_count,
+    updated_at   = now()
   RETURNING id INTO NEW.id;
 
   RETURN NEW;
