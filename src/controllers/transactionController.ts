@@ -7,7 +7,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     const validatedData = createTransactionSchema.parse(req.body);
 
     // 2. LOGIC: Here is where we will eventually add the Story Protocol notarization
-    console.log('Processing transaction for license:', validatedData.license_id);
+    console.log('Processing transaction for asset:', validatedData.asset_id);
 
     // 3. For now, we return a success message
     res.status(201).json({

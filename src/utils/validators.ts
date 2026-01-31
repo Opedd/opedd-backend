@@ -50,7 +50,7 @@ export const createPublisherSchema = z.object({
 
 // Transaction Rules
 export const createTransactionSchema = z.object({
-  license_id: z.string().uuid(),
+  asset_id: z.string().uuid(),
   amount: z.number(),
   currency: z.string(),
 });
