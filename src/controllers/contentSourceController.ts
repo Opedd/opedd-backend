@@ -7,7 +7,7 @@ import { SupabasePublisherRepo } from '../repos/PublisherRepo';
 import { GetMyLicensesUseCase } from '../use-cases/GetMyLicensesUseCase';
 import { verifyPublication } from '../services/verificationService';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { NotFoundError } from '../utils/errors';
+import { NotFoundError, AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
 const contentSourceRepo = new SupabaseContentSourceRepo();
@@ -146,6 +146,76 @@ export async function verifyContentSource(
         verificationStatus: updated.verificationStatus,
         verified,
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /content-sources/:id/sync
+ *
+ * Triggers an RSS sync for a content source by invoking the
+ * sync-content-source Supabase Edge Function with the source_id.
+ */
+export async function syncContentSource(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const id = req.params.id as string;
+
+    // Verify the content source exists and belongs to the user
+    const source = await contentSourceRepo.findById(id, authReq.accessToken);
+    if (!source) {
+      throw new NotFoundError('Content source');
+    }
+
+    logger.info('Triggering sync for content source', {
+      sourceId: id,
+      url: source.url,
+    });
+
+    // Invoke the sync-content-source edge function
+    const supabaseUrl = process.env.SUPABASE_URL;
+    if (!supabaseUrl) {
+      throw new AppError('Missing Supabase configuration', 500);
+    }
+
+    const syncUrl = `${supabaseUrl}/functions/v1/sync-content-source`;
+    const syncResponse = await fetch(syncUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authReq.accessToken}`,
+      },
+      body: JSON.stringify({ source_id: id }),
+    });
+
+    const syncData = await syncResponse.json() as {
+      success?: boolean;
+      data?: Record<string, unknown>;
+      error?: { message?: string };
+    };
+
+    if (!syncResponse.ok && !syncData.success) {
+      logger.error('Sync edge function failed', { sourceId: id, status: syncResponse.status });
+      throw new AppError(
+        syncData.error?.message || 'Sync failed',
+        syncResponse.status
+      );
+    }
+
+    logger.info('Sync completed', {
+      sourceId: id,
+      itemsImported: syncData.data?.items_imported,
+    });
+
+    res.json({
+      success: true,
+      data: syncData.data,
     });
   } catch (err) {
     next(err);

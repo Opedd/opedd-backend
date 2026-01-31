@@ -4,6 +4,7 @@ import {
   getMyContentSources,
   getMyAssets,
   verifyContentSource,
+  syncContentSource,
 } from '../controllers/contentSourceController';
 import { authMiddleware } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -17,5 +18,6 @@ router.post('/', validate(contentSourceSchema), createContentSource);
 router.get('/me', getMyContentSources);
 router.get('/me/assets', getMyAssets);
 router.post('/:id/verify', verifyContentSource);
+router.post('/:id/sync', syncContentSource);
 
 export default router;

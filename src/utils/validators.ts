@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
 // Content Source Rules
+// verification_status and verification_token are generated server-side
+// by ContentSourceRepo.create() — they must not be required from the client.
 export const contentSourceSchema = z.object({
   name: z.string().min(1),
   url: z.string().url(),
   platform: z.enum(['substack', 'beehiiv', 'ghost', 'wordpress', 'other']),
-  verification_status: z.enum(['pending', 'verified', 'failed']).default('pending'),
-  verification_token: z.string(), // The code for their bio
 });
 
 // Asset Rules

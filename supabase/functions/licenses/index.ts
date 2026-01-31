@@ -77,7 +77,7 @@ serve(async (req) => {
     if (req.method === "GET") {
       const { data: licenses, error: listError } = await supabase
         .from("licenses")
-        .select("*")
+        .select("*, content_sources(id, name, url, source_type)")
         .eq("publisher_id", publisher.id)
         .order("created_at", { ascending: false });
 
@@ -97,7 +97,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true,
-          data: licenses?.map((l) => ({
+          data: licenses?.map((l: any) => ({
             id: l.id,
             publisherId: l.publisher_id,
             title: l.title,
@@ -105,6 +105,19 @@ serve(async (req) => {
             licenseType: l.license_type,
             contentHash: l.content_hash,
             metadata: l.metadata,
+            sourceId: l.source_id ?? null,
+            sourceUrl: l.source_url ?? null,
+            humanPrice: l.human_price != null ? Number(l.human_price) : null,
+            aiPrice: l.ai_price != null ? Number(l.ai_price) : null,
+            accessType: l.access_type ?? "both",
+            contentSource: l.content_sources?.id
+              ? {
+                  id: l.content_sources.id,
+                  name: l.content_sources.name ?? null,
+                  url: l.content_sources.url,
+                  sourceType: l.content_sources.source_type,
+                }
+              : null,
             createdAt: l.created_at,
             updatedAt: l.updated_at,
           })) || [],
