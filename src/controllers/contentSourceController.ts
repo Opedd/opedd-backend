@@ -185,11 +185,17 @@ export async function syncContentSource(
     }
 
     const syncUrl = `${supabaseUrl}/functions/v1/sync-content-source`;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseAnonKey) {
+      throw new AppError('Missing Supabase anon key configuration', 500);
+    }
+
     const syncResponse = await fetch(syncUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authReq.accessToken}`,
+        'apikey': supabaseAnonKey,
       },
       body: JSON.stringify({ source_id: id }),
     });
