@@ -18,13 +18,19 @@ serve(async (req) => {
     const path = (url.searchParams.get("path") || "").replace(/^\/+/, "");
     const targetUrl = `${BACKEND_URL}/api/v1/${path}`;
 
+    const authHeader = req.headers.get("Authorization");
+    const hasAuth = !!authHeader;
+    const tokenPreview = authHeader
+      ? authHeader.substring(0, 20) + "..." + authHeader.substring(authHeader.length - 10)
+      : "NONE";
+
     console.log(`[api-proxy] ${req.method} ${targetUrl}`);
+    console.log(`[api-proxy] Auth present: ${hasAuth}, token: ${tokenPreview}`);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
 
-    const authHeader = req.headers.get("Authorization");
     if (authHeader) {
       headers["Authorization"] = authHeader;
     }
