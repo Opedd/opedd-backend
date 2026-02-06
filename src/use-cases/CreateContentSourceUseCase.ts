@@ -19,6 +19,7 @@ export class CreateContentSourceUseCase {
         name: input.name,
         url: input.url,
         sourceType: input.platform,
+        tags: input.tags ?? [],
       },
       accessToken
     );

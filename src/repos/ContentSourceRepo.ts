@@ -7,10 +7,12 @@ export interface CreateContentSourceData {
   name: string;
   url: string;
   sourceType: SourceType;
+  tags?: string[];
 }
 
 export interface IContentSourceRepo {
   create(data: CreateContentSourceData, accessToken: string): Promise<ContentSource>;
+  upsert(data: CreateContentSourceData, accessToken: string): Promise<ContentSource>;
   findByUserId(userId: string, accessToken: string): Promise<ContentSource[]>;
   findById(id: string, accessToken: string): Promise<ContentSource | null>;
   updateVerificationStatus(id: string, status: VerificationStatus, accessToken: string): Promise<ContentSource>;
@@ -30,6 +32,7 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
         source_type: data.sourceType,
         verification_status: 'pending',
         verification_token: verificationToken,
+        tags: data.tags ?? [],
       })
       .select()
       .single();
@@ -41,11 +44,40 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
     return this.mapToContentSource(source);
   }
 
+  async upsert(data: CreateContentSourceData, accessToken: string): Promise<ContentSource> {
+    const supabase = getSupabaseClientForUser(accessToken);
+    const verificationToken = crypto.randomBytes(16).toString('hex');
+
+    const { data: source, error } = await supabase
+      .from('content_sources')
+      .upsert(
+        {
+          user_id: data.userId,
+          name: data.name,
+          url: data.url,
+          source_type: data.sourceType,
+          verification_status: 'pending',
+          verification_token: verificationToken,
+          tags: data.tags ?? [],
+        },
+        { onConflict: 'user_id,url' }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to upsert content source: ${error.message}`);
+    }
+
+    return this.mapToContentSource(source);
+  }
+
   async findByUserId(userId: string, accessToken: string): Promise<ContentSource[]> {
     const supabase = getSupabaseClientForUser(accessToken);
 
+    // Query the source_management_view to get asset_count automatically
     const { data, error } = await supabase
-      .from('content_sources')
+      .from('source_management_view')
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
@@ -60,8 +92,9 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
   async findById(id: string, accessToken: string): Promise<ContentSource | null> {
     const supabase = getSupabaseClientForUser(accessToken);
 
+    // Query the source_management_view to get asset_count automatically
     const { data, error } = await supabase
-      .from('content_sources')
+      .from('source_management_view')
       .select('*')
       .eq('id', id)
       .single();
@@ -105,6 +138,9 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
       lastSyncAt: data.last_sync_at ? new Date(data.last_sync_at as string) : null,
       verificationStatus: (data.verification_status as VerificationStatus) ?? 'pending',
       verificationToken: (data.verification_token as string) ?? null,
+      tags: (data.tags as string[]) ?? [],
+      assetCount: (data.asset_count as number) ?? 0,
+      lastAssetAddedAt: data.last_asset_added_at ? new Date(data.last_asset_added_at as string) : null,
       createdAt: new Date(data.created_at as string),
       updatedAt: new Date(data.updated_at as string),
     };

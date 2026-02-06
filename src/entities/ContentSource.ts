@@ -11,6 +11,9 @@ export interface ContentSource {
   lastSyncAt: Date | null;
   verificationStatus: VerificationStatus;
   verificationToken: string | null;
+  tags: string[];
+  assetCount: number;
+  lastAssetAddedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,6 +28,9 @@ export interface ContentSourceDTO {
   lastSyncAt: string | null;
   verificationStatus: VerificationStatus;
   verificationToken: string | null;
+  tags: string[];
+  assetCount: number;
+  lastAssetAddedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,6 +46,9 @@ export function toContentSourceDTO(source: ContentSource): ContentSourceDTO {
     lastSyncAt: source.lastSyncAt?.toISOString() ?? null,
     verificationStatus: source.verificationStatus,
     verificationToken: source.verificationToken,
+    tags: source.tags,
+    assetCount: source.assetCount,
+    lastAssetAddedAt: source.lastAssetAddedAt?.toISOString() ?? null,
     createdAt: source.createdAt.toISOString(),
     updatedAt: source.updatedAt.toISOString(),
   };
