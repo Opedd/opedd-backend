@@ -405,62 +405,81 @@ serve(async (req) => {
     );
     console.log("[sync] Existing items in DB by content_hash:", existingByHash.size);
 
-    // 8. Upsert licenses (update if frontend mirrored, insert if new)
+    // 8. Upsert licenses with "Invisible Registration" flow
+    // - All successfully synced articles are marked as 'verified' (protected)
+    // - Bypass blockchain for now, just populate metadata
+    // - Every article must be linked via source_id
+    // - Return full article data for frontend display
     let importedCount = 0;
     let updatedCount = 0;
     const errors: string[] = [];
-    const importedTitles: string[] = [];
+    const syncedArticles: Array<{
+      id: string;
+      title: string;
+      source_url: string;
+      content_hash: string;
+      source_id: string | null;
+      verification_status: string;
+      published_at: string | null;
+      created_at: string;
+    }> = [];
 
     for (const item of feedItems) {
       try {
         const existing = existingByHash.get(item.contentHash!);
+        const now = new Date().toISOString();
+        const publishedAt = item.pubDate ? new Date(item.pubDate).toISOString() : null;
+
+        // Common fields for both insert and update
+        const articleData = {
+          title: item.title.substring(0, 200),
+          description: item.description,
+          source_url: item.link,
+          source_id: contentSource?.id || null, // MUST be linked to parent source
+          content_hash: item.contentHash,
+          verification_status: "verified", // Auto-protected via Invisible Registration
+          human_price: publisherSettings.default_human_price,
+          ai_price: publisherSettings.default_ai_price,
+          published_at: publishedAt,
+          metadata: {
+            pub_date: item.pubDate,
+            source_name: contentSource?.name || new URL(feedUrl).hostname,
+            auto_imported: true,
+            synced_at: now,
+            registration_type: "invisible", // Mark as invisibly registered
+          },
+        };
 
         if (existing) {
           // Update existing record (frontend may have mirrored it)
-          const { error: updateError } = await supabase
+          const { data: updatedRecord, error: updateError } = await supabase
             .from("licenses")
-            .update({
-              title: item.title.substring(0, 200),
-              description: item.description,
-              source_url: item.link,
-              source_id: contentSource?.id || null,
-              metadata: {
-                human_price: publisherSettings.default_human_price,
-                ai_price: publisherSettings.default_ai_price,
-                pub_date: item.pubDate,
-                source_name: contentSource?.name || new URL(feedUrl).hostname,
-                auto_imported: true,
-                synced_at: new Date().toISOString(),
-              },
-            })
-            .eq("id", existing.id);
+            .update(articleData)
+            .eq("id", existing.id)
+            .select("id, title, source_url, content_hash, source_id, verification_status, published_at, created_at")
+            .single();
 
           if (updateError) {
             console.error("[sync] Update error for", item.link, ":", updateError.message);
             errors.push(`${item.title}: ${updateError.message}`);
           } else {
             updatedCount++;
-            console.log("[sync] Updated existing:", item.title);
+            if (updatedRecord) {
+              syncedArticles.push(updatedRecord);
+            }
+            console.log("[sync] Updated & protected:", item.title);
           }
         } else {
-          // Insert new record
-          const { error: insertError } = await supabase.from("licenses").insert({
-            publisher_id: publisherData.id,
-            title: item.title.substring(0, 200),
-            description: item.description,
-            license_type: "standard",
-            source_url: item.link,
-            source_id: contentSource?.id || null,
-            content_hash: item.contentHash,
-            metadata: {
-              human_price: publisherSettings.default_human_price,
-              ai_price: publisherSettings.default_ai_price,
-              pub_date: item.pubDate,
-              source_name: contentSource?.name || new URL(feedUrl).hostname,
-              auto_imported: true,
-              synced_at: new Date().toISOString(),
-            },
-          });
+          // Insert new record with full metadata
+          const { data: insertedRecord, error: insertError } = await supabase
+            .from("licenses")
+            .insert({
+              publisher_id: publisherData.id,
+              license_type: "standard",
+              ...articleData,
+            })
+            .select("id, title, source_url, content_hash, source_id, verification_status, published_at, created_at")
+            .single();
 
           if (insertError) {
             // Skip duplicates silently (unique constraint on source_url)
@@ -472,8 +491,10 @@ serve(async (req) => {
             }
           } else {
             importedCount++;
-            importedTitles.push(item.title);
-            console.log("[sync] Imported:", item.title);
+            if (insertedRecord) {
+              syncedArticles.push(insertedRecord);
+            }
+            console.log("[sync] Imported & protected:", item.title);
           }
         }
       } catch (err) {
@@ -483,29 +504,36 @@ serve(async (req) => {
       }
     }
 
-    // 9. Update last_sync_at if we have a content_source
+    // 9. Update last_sync_at and sync_status for content_source
     if (contentSource?.id) {
       await supabase
         .from("content_sources")
-        .update({ last_sync_at: new Date().toISOString() })
+        .update({
+          last_sync_at: new Date().toISOString(),
+          sync_status: "synced",
+          article_count: syncedArticles.length,
+        })
         .eq("id", contentSource.id);
-      console.log("[sync] Updated last_sync_at for source:", contentSource.id);
+      console.log("[sync] Updated content_source:", contentSource.id, "with", syncedArticles.length, "articles");
     }
 
     console.log("[sync] ====== SYNC COMPLETE ======");
     console.log("[sync] Summary - Found:", feedItems.length, "| Imported:", importedCount, "| Updated:", updatedCount, "| Errors:", errors.length);
 
+    // Return full array of synced articles for immediate frontend display
     return new Response(
       JSON.stringify({
         success: true,
         data: {
           source_id: contentSource?.id || null,
           source_url: feedUrl,
+          source_name: contentSource?.name || new URL(feedUrl).hostname,
           items_found: feedItems.length,
           items_imported: importedCount,
           items_updated: updatedCount,
           items_failed: errors.length,
-          imported_titles: importedTitles.slice(0, 5),
+          // Full article array for frontend to display immediately without refresh
+          articles: syncedArticles,
           errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
         },
       }),
