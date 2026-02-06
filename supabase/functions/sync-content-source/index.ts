@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
+import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,11 +12,23 @@ const corsHeaders = {
 // Chrome-like User-Agent for sites that block bots
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+// Generate content_hash from source_url - must match frontend logic
+// Uses SHA-256 hash of the URL, truncated to 32 chars
+async function generateContentHash(sourceUrl: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(sourceUrl);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  return hashHex.substring(0, 32);
+}
+
 interface RSSItem {
   title: string;
   link: string;
   description: string;
   pubDate: string | null;
+  contentHash?: string;
 }
 
 interface ContentSource {
@@ -374,55 +387,94 @@ serve(async (req) => {
       );
     }
 
-    // 6. Get existing source_urls to check for duplicates
-    const sourceUrls = feedItems.map((item) => item.link);
+    // 6. Generate content_hash for each item
+    for (const item of feedItems) {
+      item.contentHash = await generateContentHash(item.link);
+    }
+    console.log("[sync] Generated content hashes for", feedItems.length, "items");
+
+    // 7. Get existing items by content_hash to check for duplicates/updates
+    const contentHashes = feedItems.map((item) => item.contentHash!);
     const { data: existingLicenses } = await supabase
       .from("licenses")
-      .select("source_url")
-      .in("source_url", sourceUrls);
+      .select("id, content_hash, source_url")
+      .in("content_hash", contentHashes);
 
-    const existingUrls = new Set((existingLicenses || []).map((l) => l.source_url));
-    console.log("[sync] Existing URLs in DB:", existingUrls.size);
+    const existingByHash = new Map(
+      (existingLicenses || []).map((l) => [l.content_hash, l])
+    );
+    console.log("[sync] Existing items in DB by content_hash:", existingByHash.size);
 
-    // 7. Filter out duplicates and prepare new items
-    const newItems = feedItems.filter((item) => !existingUrls.has(item.link));
-    console.log("[sync] New items to import:", newItems.length);
-
-    // 8. Insert new licenses
+    // 8. Upsert licenses (update if frontend mirrored, insert if new)
     let importedCount = 0;
+    let updatedCount = 0;
     const errors: string[] = [];
     const importedTitles: string[] = [];
 
-    for (const item of newItems) {
+    for (const item of feedItems) {
       try {
-        const { error: insertError } = await supabase.from("licenses").insert({
-          publisher_id: publisherData.id,
-          title: item.title.substring(0, 200),
-          description: item.description,
-          license_type: "standard",
-          source_url: item.link,
-          source_id: contentSource?.id || null,
-          metadata: {
-            human_price: publisherSettings.default_human_price,
-            ai_price: publisherSettings.default_ai_price,
-            pub_date: item.pubDate,
-            source_name: contentSource?.name || new URL(feedUrl).hostname,
-            auto_imported: true,
-          },
-        });
+        const existing = existingByHash.get(item.contentHash!);
 
-        if (insertError) {
-          // Skip duplicates silently (unique constraint)
-          if (!insertError.message.includes("duplicate")) {
-            console.error("[sync] Insert error for", item.link, ":", insertError.message);
-            errors.push(`${item.title}: ${insertError.message}`);
+        if (existing) {
+          // Update existing record (frontend may have mirrored it)
+          const { error: updateError } = await supabase
+            .from("licenses")
+            .update({
+              title: item.title.substring(0, 200),
+              description: item.description,
+              source_url: item.link,
+              source_id: contentSource?.id || null,
+              metadata: {
+                human_price: publisherSettings.default_human_price,
+                ai_price: publisherSettings.default_ai_price,
+                pub_date: item.pubDate,
+                source_name: contentSource?.name || new URL(feedUrl).hostname,
+                auto_imported: true,
+                synced_at: new Date().toISOString(),
+              },
+            })
+            .eq("id", existing.id);
+
+          if (updateError) {
+            console.error("[sync] Update error for", item.link, ":", updateError.message);
+            errors.push(`${item.title}: ${updateError.message}`);
           } else {
-            console.log("[sync] Skipped duplicate:", item.title);
+            updatedCount++;
+            console.log("[sync] Updated existing:", item.title);
           }
         } else {
-          importedCount++;
-          importedTitles.push(item.title);
-          console.log("[sync] Imported:", item.title);
+          // Insert new record
+          const { error: insertError } = await supabase.from("licenses").insert({
+            publisher_id: publisherData.id,
+            title: item.title.substring(0, 200),
+            description: item.description,
+            license_type: "standard",
+            source_url: item.link,
+            source_id: contentSource?.id || null,
+            content_hash: item.contentHash,
+            metadata: {
+              human_price: publisherSettings.default_human_price,
+              ai_price: publisherSettings.default_ai_price,
+              pub_date: item.pubDate,
+              source_name: contentSource?.name || new URL(feedUrl).hostname,
+              auto_imported: true,
+              synced_at: new Date().toISOString(),
+            },
+          });
+
+          if (insertError) {
+            // Skip duplicates silently (unique constraint on source_url)
+            if (!insertError.message.includes("duplicate")) {
+              console.error("[sync] Insert error for", item.link, ":", insertError.message);
+              errors.push(`${item.title}: ${insertError.message}`);
+            } else {
+              console.log("[sync] Skipped duplicate:", item.title);
+            }
+          } else {
+            importedCount++;
+            importedTitles.push(item.title);
+            console.log("[sync] Imported:", item.title);
+          }
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Unexpected error";
@@ -441,7 +493,7 @@ serve(async (req) => {
     }
 
     console.log("[sync] ====== SYNC COMPLETE ======");
-    console.log("[sync] Summary - Found:", feedItems.length, "| Imported:", importedCount, "| Skipped:", feedItems.length - newItems.length, "| Errors:", errors.length);
+    console.log("[sync] Summary - Found:", feedItems.length, "| Imported:", importedCount, "| Updated:", updatedCount, "| Errors:", errors.length);
 
     return new Response(
       JSON.stringify({
@@ -451,7 +503,7 @@ serve(async (req) => {
           source_url: feedUrl,
           items_found: feedItems.length,
           items_imported: importedCount,
-          items_skipped: feedItems.length - newItems.length,
+          items_updated: updatedCount,
           items_failed: errors.length,
           imported_titles: importedTitles.slice(0, 5),
           errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
