@@ -131,14 +131,15 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
     return {
       id: data.id as string,
       userId: data.user_id as string,
-      sourceType: data.source_type as SourceType,
+      sourceType: (data.source_type as SourceType) ?? 'other',
       url: data.url as string,
       name: (data.name as string) ?? null,
-      isActive: data.is_active as boolean,
+      isActive: (data.is_active as boolean) ?? true,
       lastSyncAt: data.last_sync_at ? new Date(data.last_sync_at as string) : null,
       verificationStatus: (data.verification_status as VerificationStatus) ?? 'pending',
       verificationToken: (data.verification_token as string) ?? null,
       tags: (data.tags as string[]) ?? [],
+      // These fields come from source_management_view; default to 0/null when querying base table
       assetCount: (data.asset_count as number) ?? 0,
       lastAssetAddedAt: data.last_asset_added_at ? new Date(data.last_asset_added_at as string) : null,
       createdAt: new Date(data.created_at as string),
