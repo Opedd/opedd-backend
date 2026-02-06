@@ -175,22 +175,39 @@ serve(async (req) => {
       );
     }
 
-    // 1. Fetch publisher for this user (needed for both paths)
-    const { data: publisher, error: publisherError } = await supabase
+    // 1. Fetch or create publisher for this user (needed for both paths)
+    let { data: publisher, error: publisherError } = await supabase
       .from("publishers")
       .select("id")
       .eq("user_id", user.id)
       .single();
 
+    // Auto-create publisher if one doesn't exist
     if (publisherError || !publisher) {
-      console.error("[sync] ERROR: Publisher not found:", publisherError?.message);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: { code: "NO_PUBLISHER", message: "Publisher profile not found. Please create a publisher first." },
-        }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.log("[sync] Publisher not found, auto-creating one for user:", user.id);
+
+      const { data: newPublisher, error: createPublisherError } = await supabase
+        .from("publishers")
+        .insert({
+          user_id: user.id,
+          name: user.email?.split("@")[0] || "Publisher",
+        })
+        .select("id")
+        .single();
+
+      if (createPublisherError || !newPublisher) {
+        console.error("[sync] ERROR: Failed to create publisher:", createPublisherError?.message);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: "PUBLISHER_CREATE_FAILED", message: "Failed to create publisher profile. Please try again." },
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      publisher = newPublisher;
+      console.log("[sync] Auto-created publisher:", publisher.id);
     }
 
     const publisherData = publisher as Publisher;
