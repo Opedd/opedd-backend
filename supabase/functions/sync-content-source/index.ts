@@ -12,6 +12,36 @@ const corsHeaders = {
 // Chrome-like User-Agent for sites that block bots
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+// Generate a clean, readable snippet from HTML content
+function generateSnippet(html: string): string {
+  // 1. Strip HTML tags
+  let text = html.replace(/<[^>]*>/g, "");
+  // 2. Decode common HTML entities
+  text = text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+  // 3. Collapse whitespace
+  text = text.replace(/\s+/g, " ").trim();
+  // 4. Truncate at ~300 chars on a sentence or word boundary
+  if (text.length <= 300) return text;
+  const sentenceEnd = Math.max(
+    text.lastIndexOf(". ", 300),
+    text.lastIndexOf("! ", 300),
+    text.lastIndexOf("? ", 300),
+  );
+  if (sentenceEnd > 100) return text.substring(0, sentenceEnd + 1) + "\u2026";
+  const wordEnd = text.lastIndexOf(" ", 300);
+  if (wordEnd > 100) return text.substring(0, wordEnd) + "\u2026";
+  return text.substring(0, 300) + "\u2026";
+}
+
 // Generate content_hash from source_url - must match frontend logic
 // Uses SHA-256 hash of the URL, truncated to 32 chars
 async function generateContentHash(sourceUrl: string): Promise<string> {
@@ -85,8 +115,8 @@ function parseRSSFeed(xml: string): RSSItem[] {
         link = linkEl?.getAttribute("href") || "";
       }
 
-      // Clean up description (remove HTML tags for preview)
-      description = description.replace(/<[^>]*>/g, "").substring(0, 500);
+      // Clean up description for preview
+      description = generateSnippet(description);
 
       if (title && link) {
         items.push({ title, link, description, pubDate });

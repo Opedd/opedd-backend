@@ -1,4 +1,4 @@
-export type SourceType = 'rss' | 'substack' | 'ghost' | 'wordpress' | 'medium' | 'beehiiv' | 'other';
+export type SourceType = 'rss' | 'substack' | 'ghost' | 'wordpress' | 'medium' | 'beehiiv' | 'custom' | 'other';
 export type VerificationStatus = 'pending' | 'verified' | 'failed';
 
 export interface ContentSource {
@@ -11,6 +11,7 @@ export interface ContentSource {
   lastSyncAt: Date | null;
   verificationStatus: VerificationStatus;
   verificationToken: string | null;
+  lastVerifiedAt: Date | null;
   tags: string[];
   assetCount: number;
   lastAssetAddedAt: Date | null;
@@ -28,6 +29,7 @@ export interface ContentSourceDTO {
   lastSyncAt: string | null;
   verificationStatus: VerificationStatus;
   verificationToken: string | null;
+  lastVerifiedAt: string | null;
   tags: string[];
   assetCount: number;
   lastAssetAddedAt: string | null;
@@ -46,6 +48,7 @@ export function toContentSourceDTO(source: ContentSource): ContentSourceDTO {
     lastSyncAt: source.lastSyncAt?.toISOString() ?? null,
     verificationStatus: source.verificationStatus,
     verificationToken: source.verificationToken,
+    lastVerifiedAt: source.lastVerifiedAt?.toISOString() ?? null,
     tags: source.tags,
     assetCount: source.assetCount,
     lastAssetAddedAt: source.lastAssetAddedAt?.toISOString() ?? null,

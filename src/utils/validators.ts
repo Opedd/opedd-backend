@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const contentSourceSchema = z.object({
   name: z.string().min(1),
   url: z.string().url(),
-  platform: z.enum(['substack', 'beehiiv', 'ghost', 'wordpress', 'other']),
+  platform: z.enum(['substack', 'beehiiv', 'ghost', 'wordpress', 'custom', 'other']),
   tags: z.array(z.string()).optional().default([]),
 });
 

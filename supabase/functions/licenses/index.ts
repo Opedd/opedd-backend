@@ -118,6 +118,10 @@ serve(async (req) => {
                   sourceType: l.content_sources.source_type,
                 }
               : null,
+            publishedAt: l.published_at ?? null,
+            thumbnailUrl: l.thumbnail_url ?? null,
+            verificationStatus: l.verification_status ?? 'pending',
+            sourceStatus: l.source_status ?? 'active',
             createdAt: l.created_at,
             updatedAt: l.updated_at,
           })) || [],

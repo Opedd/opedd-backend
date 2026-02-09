@@ -108,6 +108,10 @@ export class SupabaseLicenseRepo implements ILicenseRepo {
       aiPrice: data.ai_price != null ? Number(data.ai_price) : null,
       accessType: (data.access_type as AccessType) ?? 'both',
       contentSource,
+      publishedAt: data.published_at ? new Date(data.published_at as string) : null,
+      thumbnailUrl: (data.thumbnail_url as string) ?? null,
+      verificationStatus: (data.verification_status as string) ?? 'pending',
+      sourceStatus: (data.source_status as string) ?? 'active',
       createdAt: new Date(data.created_at as string),
       updatedAt: new Date(data.updated_at as string),
     };

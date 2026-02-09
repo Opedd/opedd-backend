@@ -113,9 +113,14 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
   ): Promise<ContentSource> {
     const supabase = getSupabaseClientForUser(accessToken);
 
+    const updateData: Record<string, unknown> = { verification_status: status };
+    if (status === 'verified') {
+      updateData.last_verified_at = new Date().toISOString();
+    }
+
     const { data, error } = await supabase
       .from('content_sources')
-      .update({ verification_status: status })
+      .update(updateData)
       .eq('id', id)
       .select()
       .single();
@@ -138,6 +143,7 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
       lastSyncAt: data.last_sync_at ? new Date(data.last_sync_at as string) : null,
       verificationStatus: (data.verification_status as VerificationStatus) ?? 'pending',
       verificationToken: (data.verification_token as string) ?? null,
+      lastVerifiedAt: data.last_verified_at ? new Date(data.last_verified_at as string) : null,
       tags: (data.tags as string[]) ?? [],
       // These fields come from source_management_view; default to 0/null when querying base table
       assetCount: (data.asset_count as number) ?? 0,

@@ -22,6 +22,10 @@ export interface License {
   aiPrice: number | null;
   accessType: AccessType;
   contentSource: ContentSourceSummary | null;
+  publishedAt: Date | null;
+  thumbnailUrl: string | null;
+  verificationStatus: string;
+  sourceStatus: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,6 +44,10 @@ export interface LicenseDTO {
   aiPrice: number | null;
   accessType: AccessType;
   contentSource: ContentSourceSummary | null;
+  publishedAt: string | null;
+  thumbnailUrl: string | null;
+  verificationStatus: string;
+  sourceStatus: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +67,10 @@ export function toLicenseDTO(license: License): LicenseDTO {
     aiPrice: license.aiPrice,
     accessType: license.accessType,
     contentSource: license.contentSource,
+    publishedAt: license.publishedAt ? license.publishedAt.toISOString() : null,
+    thumbnailUrl: license.thumbnailUrl,
+    verificationStatus: license.verificationStatus,
+    sourceStatus: license.sourceStatus,
     createdAt: license.createdAt.toISOString(),
     updatedAt: license.updatedAt.toISOString(),
   };
