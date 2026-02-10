@@ -20,17 +20,24 @@ function getCandidateUrls(
   sourceType?: string
 ): string[] {
   const base = url.replace(/\/+$/, "");
+  // Strip common feed paths to get the site root
+  const siteRoot = base.replace(/\/(feed|rss|atom)(\.xml)?$/i, "");
   const candidates: string[] = [];
 
-  if (sourceType === "substack" || sourceType === "rss") {
+  // Try site root /about first (Substack convention)
+  candidates.push(`${siteRoot}/about`);
+
+  // If base differs from siteRoot, also try base/about
+  if (siteRoot !== base) {
     candidates.push(`${base}/about`);
   }
 
-  if (!candidates.includes(`${base}/about`)) {
-    candidates.push(`${base}/about`);
+  // Try site root and original base
+  candidates.push(siteRoot);
+  if (siteRoot !== base) {
+    candidates.push(base);
   }
 
-  candidates.push(base);
   return candidates;
 }
 
@@ -274,10 +281,24 @@ serve(async (req) => {
       );
     }
 
-    console.log(
-      "[verify-source] Updated status to:",
-      newStatus
-    );
+    console.log("[verify-source] Updated source status to:", newStatus);
+
+    // 6b. If verified, cascade to all articles under this source
+    if (verified) {
+      const { count, error: articlesError } = await supabase
+        .from("licenses")
+        .update({ verification_status: "verified" })
+        .eq("source_id", source_id)
+        .neq("verification_status", "verified")
+        .select("id", { count: "exact", head: true });
+
+      if (articlesError) {
+        console.error("[verify-source] Failed to update articles:", articlesError.message);
+      } else {
+        console.log("[verify-source] Verified", count, "articles under this source");
+      }
+    }
+
     console.log("[verify-source] ====== VERIFY COMPLETE ======");
 
     // 7. Return result
