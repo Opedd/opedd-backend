@@ -77,7 +77,7 @@ serve(async (req) => {
     if (req.method === "GET") {
       const { data: licenses, error: listError } = await supabase
         .from("licenses")
-        .select("*, content_sources(id, name, url, source_type)")
+        .select("*, content_sources(id, name, url, source_type, verification_token, verification_status)")
         .eq("publisher_id", publisher.id)
         .order("created_at", { ascending: false });
 
@@ -99,31 +99,30 @@ serve(async (req) => {
           success: true,
           data: licenses?.map((l: any) => ({
             id: l.id,
-            publisherId: l.publisher_id,
+            user_id: user.id,
             title: l.title,
             description: l.description,
-            licenseType: l.license_type,
-            contentHash: l.content_hash,
+            license_type: l.license_type,
+            content_hash: l.content_hash,
             metadata: l.metadata,
-            sourceId: l.source_id ?? null,
-            sourceUrl: l.source_url ?? null,
-            humanPrice: l.human_price != null ? Number(l.human_price) : null,
-            aiPrice: l.ai_price != null ? Number(l.ai_price) : null,
-            accessType: l.access_type ?? "both",
-            contentSource: l.content_sources?.id
-              ? {
-                  id: l.content_sources.id,
-                  name: l.content_sources.name ?? null,
-                  url: l.content_sources.url,
-                  sourceType: l.content_sources.source_type,
-                }
-              : null,
-            publishedAt: l.published_at ?? null,
-            thumbnailUrl: l.thumbnail_url ?? null,
-            verificationStatus: l.verification_status ?? 'pending',
-            sourceStatus: l.source_status ?? 'active',
-            createdAt: l.created_at,
-            updatedAt: l.updated_at,
+            source_id: l.source_id ?? null,
+            publication_id: l.source_id ?? null,
+            source_url: l.source_url ?? null,
+            human_price: l.human_price != null ? Number(l.human_price) : null,
+            ai_price: l.ai_price != null ? Number(l.ai_price) : null,
+            access_type: l.access_type ?? null,
+            licensing_enabled: l.licensing_enabled ?? true,
+            total_revenue: l.total_revenue != null ? Number(l.total_revenue) : 0,
+            human_licenses_sold: l.human_licenses_sold ?? 0,
+            ai_licenses_sold: l.ai_licenses_sold ?? 0,
+            content: l.content ?? null,
+            thumbnail_url: l.thumbnail_url ?? null,
+            published_at: l.published_at ?? null,
+            verification_token: l.content_sources?.verification_token ?? l.verification_token ?? null,
+            verification_status: l.content_sources?.verification_status ?? l.verification_status ?? 'pending',
+            source_status: l.source_status ?? 'active',
+            created_at: l.created_at,
+            updated_at: l.updated_at,
           })) || [],
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
