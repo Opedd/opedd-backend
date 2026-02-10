@@ -288,6 +288,7 @@ serve(async (req) => {
           id: source.id,
           verification_status: newStatus,
           verified,
+          checked_urls: candidates,
         },
       }),
       {

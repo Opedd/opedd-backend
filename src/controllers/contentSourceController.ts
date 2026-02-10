@@ -153,6 +153,43 @@ export async function verifyContentSource(
 }
 
 /**
+ * POST /content-sources/:id/regenerate-token
+ *
+ * Generates a new verification token for the content source
+ * and resets verification_status to 'pending'.
+ */
+export async function regenerateToken(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const id = req.params.id as string;
+
+    const source = await contentSourceRepo.findById(id, authReq.accessToken);
+    if (!source) {
+      throw new NotFoundError('Content source');
+    }
+
+    const updated = await contentSourceRepo.regenerateToken(id, authReq.accessToken);
+
+    logger.info('Regenerated verification token', { sourceId: id });
+
+    res.json({
+      success: true,
+      data: {
+        id: updated.id,
+        verificationToken: updated.verificationToken,
+        verificationStatus: updated.verificationStatus,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * POST /content-sources/:id/sync
  *
  * Triggers an RSS sync for a content source by invoking the

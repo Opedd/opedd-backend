@@ -10,18 +10,30 @@ export interface CreateContentSourceData {
   tags?: string[];
 }
 
+function generateVerificationToken(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let part1 = '';
+  let part2 = '';
+  for (let i = 0; i < 4; i++) {
+    part1 += chars[Math.floor(Math.random() * chars.length)];
+    part2 += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `opedd-verify-${part1}-${part2}`;
+}
+
 export interface IContentSourceRepo {
   create(data: CreateContentSourceData, accessToken: string): Promise<ContentSource>;
   upsert(data: CreateContentSourceData, accessToken: string): Promise<ContentSource>;
   findByUserId(userId: string, accessToken: string): Promise<ContentSource[]>;
   findById(id: string, accessToken: string): Promise<ContentSource | null>;
   updateVerificationStatus(id: string, status: VerificationStatus, accessToken: string): Promise<ContentSource>;
+  regenerateToken(id: string, accessToken: string): Promise<ContentSource>;
 }
 
 export class SupabaseContentSourceRepo implements IContentSourceRepo {
   async create(data: CreateContentSourceData, accessToken: string): Promise<ContentSource> {
     const supabase = getSupabaseClientForUser(accessToken);
-    const verificationToken = crypto.randomBytes(16).toString('hex');
+    const verificationToken = generateVerificationToken();
 
     const { data: source, error } = await supabase
       .from('content_sources')
@@ -46,7 +58,7 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
 
   async upsert(data: CreateContentSourceData, accessToken: string): Promise<ContentSource> {
     const supabase = getSupabaseClientForUser(accessToken);
-    const verificationToken = crypto.randomBytes(16).toString('hex');
+    const verificationToken = generateVerificationToken();
 
     const { data: source, error } = await supabase
       .from('content_sources')
@@ -127,6 +139,27 @@ export class SupabaseContentSourceRepo implements IContentSourceRepo {
 
     if (error) {
       throw new Error(`Failed to update verification status: ${error.message}`);
+    }
+
+    return this.mapToContentSource(data);
+  }
+
+  async regenerateToken(id: string, accessToken: string): Promise<ContentSource> {
+    const supabase = getSupabaseClientForUser(accessToken);
+    const newToken = generateVerificationToken();
+
+    const { data, error } = await supabase
+      .from('content_sources')
+      .update({
+        verification_token: newToken,
+        verification_status: 'pending',
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to regenerate token: ${error.message}`);
     }
 
     return this.mapToContentSource(data);

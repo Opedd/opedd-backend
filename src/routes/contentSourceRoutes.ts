@@ -4,6 +4,7 @@ import {
   getMyContentSources,
   getMyAssets,
   verifyContentSource,
+  regenerateToken,
   syncContentSource,
 } from '../controllers/contentSourceController';
 import { authMiddleware } from '../middleware/auth';
@@ -18,6 +19,7 @@ router.post('/', validate(contentSourceSchema), createContentSource);
 router.get('/me', getMyContentSources);
 router.get('/me/assets', getMyAssets);
 router.post('/:id/verify', verifyContentSource);
+router.post('/:id/regenerate-token', regenerateToken);
 router.post('/:id/sync', syncContentSource);
 
 export default router;
