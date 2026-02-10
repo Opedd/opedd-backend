@@ -49,17 +49,16 @@ export const createPublisherSchema = z.object({
   url: z.string().url().optional(),
 });
 
-// Transaction Rules
-export const createTransactionSchema = z.object({
-  asset_id: z.string().uuid(),
-  amount: z.number(),
-  currency: z.string(),
-});
-
 export type ContentSourceInput = z.infer<typeof contentSourceSchema>;
 export type AssetInput = z.infer<typeof assetSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type CreateLicenseInput = z.infer<typeof createLicenseSchema>;
 export type CreatePublisherInput = z.infer<typeof createPublisherSchema>;
-export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
+
+// Publisher Settings Rules
+export const updatePublisherSettingsSchema = z.object({
+  defaultHumanPrice: z.number().min(0).optional(),
+  defaultAiPrice: z.number().min(0).optional(),
+});
+export type UpdatePublisherSettingsInput = z.infer<typeof updatePublisherSettingsSchema>;
