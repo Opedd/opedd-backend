@@ -49,33 +49,29 @@ serve(async (req) => {
 
     console.log("[licenses] User authenticated:", user.id);
 
-    // Get user's publisher (direct owner or team member)
-    let publisher: { id: string } | null = null;
-
-    const { data: directPublisher } = await supabase
+    // Get user's publisher
+    let { data: publisher, error: publisherError } = await supabase
       .from("publishers")
       .select("id")
       .eq("user_id", user.id)
       .single();
 
-    if (directPublisher) {
-      publisher = directPublisher;
-    } else {
-      // Fallback: check team_members
+    // Fallback: check team_members if not a direct owner
+    if (!publisher) {
       const { data: membership } = await supabase
         .from("team_members")
         .select("publisher_id")
         .eq("user_id", user.id)
         .limit(1)
-        .single();
-
+        .maybeSingle();
       if (membership) {
         publisher = { id: membership.publisher_id };
+        publisherError = null;
       }
     }
 
-    if (!publisher) {
-      console.error("[licenses] Publisher not found for user:", user.id);
+    if (publisherError || !publisher) {
+      console.error("[licenses] Publisher not found:", publisherError?.message);
       return new Response(
         JSON.stringify({
           success: false,

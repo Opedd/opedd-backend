@@ -42,13 +42,12 @@ ALTER TABLE team_invitations ENABLE ROW LEVEL SECURITY;
 
 -- 6. RLS policies for team_members
 
--- Members of the same publisher can see each other
-CREATE POLICY "team_members_select_same_publisher" ON team_members
-  FOR SELECT USING (
-    publisher_id IN (
-      SELECT tm.publisher_id FROM team_members tm WHERE tm.user_id = auth.uid()
-    )
-  );
+-- Users can see their own team memberships
+-- NOTE: Using user_id = auth.uid() instead of a self-referencing subquery
+-- to avoid infinite recursion in PostgreSQL RLS evaluation.
+-- Team listing (seeing other members) is handled by service role in publisher-profile.
+CREATE POLICY "team_members_select_own" ON team_members
+  FOR SELECT USING (user_id = auth.uid());
 
 -- Owners can insert new members
 CREATE POLICY "team_members_insert_owner" ON team_members

@@ -22,7 +22,7 @@ serve(async (req) => {
       return errorResponse("Invalid JSON");
     }
 
-    const { article_id, buyer_email, license_type, buyer_name, buyer_organization, intended_use, return_url } = body;
+    const { article_id, buyer_email, license_type, buyer_name, buyer_organization, intended_use, return_url, embedded } = body;
 
     // Validate required fields
     if (!article_id || typeof article_id !== "string") {
@@ -76,11 +76,6 @@ serve(async (req) => {
       .eq("id", article.publisher_id)
       .single();
 
-    // Determine URLs for Stripe redirect
-    const frontendUrl = return_url || Deno.env.get("FRONTEND_URL") || "https://opedd.com";
-    const successUrl = `${frontendUrl}/license/success?session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = `${frontendUrl}/l/${article_id}`;
-
     // Create Stripe Checkout Session
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
       apiVersion: "2024-12-18.acacia",
@@ -113,9 +108,18 @@ serve(async (req) => {
         buyer_organization: buyer_organization || "",
         intended_use: intended_use || "",
       },
-      success_url: successUrl,
-      cancel_url: cancelUrl,
     };
+
+    if (embedded) {
+      // Embedded Checkout mode — renders inside widget on publisher's page
+      sessionParams.ui_mode = "embedded";
+      sessionParams.return_url = return_url || "https://opedd.com/license/success?session_id={CHECKOUT_SESSION_ID}";
+    } else {
+      // Hosted Checkout mode — redirects to Stripe-hosted page
+      const frontendUrl = return_url || Deno.env.get("FRONTEND_URL") || "https://opedd.com";
+      sessionParams.success_url = `${frontendUrl}/license/success?session_id={CHECKOUT_SESSION_ID}`;
+      sessionParams.cancel_url = `${frontendUrl}/l/${article_id}`;
+    }
 
     // If publisher has Stripe Connect, route payment to them with 10% platform fee
     if (publisher?.stripe_account_id && publisher?.stripe_onboarding_complete) {
@@ -161,6 +165,13 @@ serve(async (req) => {
       actor_id: buyer_email,
       metadata: { license_type, amount: price, stripe_session_id: session.id },
     });
+
+    if (embedded) {
+      return successResponse({
+        client_secret: session.client_secret,
+        publishable_key: Deno.env.get("STRIPE_PUBLISHABLE_KEY"),
+      });
+    }
 
     return successResponse({ checkout_url: session.url });
   } catch (error) {
