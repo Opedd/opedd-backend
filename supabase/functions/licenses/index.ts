@@ -49,15 +49,33 @@ serve(async (req) => {
 
     console.log("[licenses] User authenticated:", user.id);
 
-    // Get user's publisher
-    const { data: publisher, error: publisherError } = await supabase
+    // Get user's publisher (direct owner or team member)
+    let publisher: { id: string } | null = null;
+
+    const { data: directPublisher } = await supabase
       .from("publishers")
       .select("id")
       .eq("user_id", user.id)
       .single();
 
-    if (publisherError || !publisher) {
-      console.error("[licenses] Publisher not found:", publisherError?.message);
+    if (directPublisher) {
+      publisher = directPublisher;
+    } else {
+      // Fallback: check team_members
+      const { data: membership } = await supabase
+        .from("team_members")
+        .select("publisher_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
+
+      if (membership) {
+        publisher = { id: membership.publisher_id };
+      }
+    }
+
+    if (!publisher) {
+      console.error("[licenses] Publisher not found for user:", user.id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -73,13 +91,44 @@ serve(async (req) => {
     const pathParts = url.pathname.split("/").filter(Boolean);
     const licenseId = pathParts[pathParts.length - 1] !== "licenses" ? pathParts[pathParts.length - 1] : null;
 
-    // Handle GET - List user's licenses
+    // Handle GET - List user's licenses (paginated)
     if (req.method === "GET") {
-      const { data: licenses, error: listError } = await supabase
+      const page = Math.max(1, parseInt(url.searchParams.get("page") || "1"));
+      const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") || "30")));
+      const search = url.searchParams.get("search") || "";
+      const status = url.searchParams.get("status") || "all";
+      const sourceId = url.searchParams.get("source_id") || "all";
+
+      let query = supabase
         .from("licenses")
-        .select("*, content_sources(id, name, url, source_type, verification_token, verification_status)")
-        .eq("publisher_id", publisher.id)
-        .order("created_at", { ascending: false });
+        .select("*, content_sources(id, name, url, source_type, verification_token, verification_status)", { count: "exact" })
+        .eq("publisher_id", publisher.id);
+
+      // Server-side filters
+      if (search) {
+        query = query.ilike("title", `%${search}%`);
+      }
+      if (status !== "all") {
+        if (status === "protected") {
+          query = query.or("verification_status.eq.verified,licensing_enabled.eq.true");
+        } else if (status === "syncing") {
+          query = query.eq("verification_status", "pending").eq("licensing_enabled", false);
+        } else if (status === "pending") {
+          query = query.is("verification_status", null);
+        } else if (status === "failed") {
+          query = query.eq("verification_status", "failed");
+        }
+      }
+      if (sourceId === "direct") {
+        query = query.is("source_id", null);
+      } else if (sourceId !== "all") {
+        query = query.eq("source_id", sourceId);
+      }
+
+      const offset = (page - 1) * limit;
+      query = query.order("created_at", { ascending: false }).range(offset, offset + limit - 1);
+
+      const { data: licenses, error: listError, count } = await query;
 
       if (listError) {
         console.error("[licenses] List error:", listError.message);
@@ -92,7 +141,14 @@ serve(async (req) => {
         );
       }
 
-      console.log("[licenses] Returning", licenses?.length || 0, "licenses");
+      // Get protected count for metrics (lightweight head-only query)
+      const { count: protectedCount } = await supabase
+        .from("licenses")
+        .select("id", { count: "exact", head: true })
+        .eq("publisher_id", publisher.id)
+        .or("verification_status.eq.verified,licensing_enabled.eq.true");
+
+      console.log("[licenses] Returning page", page, "of", Math.ceil((count || 0) / limit), "— total:", count);
 
       return new Response(
         JSON.stringify({
@@ -124,6 +180,10 @@ serve(async (req) => {
             created_at: l.created_at,
             updated_at: l.updated_at,
           })) || [],
+          total: count || 0,
+          page,
+          limit,
+          protectedCount: protectedCount || 0,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );

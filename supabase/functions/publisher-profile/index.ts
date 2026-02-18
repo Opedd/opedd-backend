@@ -3,6 +3,7 @@ import { corsHeaders, errorResponse, successResponse } from "../_shared/cors.ts"
 import { createServiceClient, authenticatePublisher } from "../_shared/auth.ts";
 import Stripe from "https://esm.sh/stripe@17?target=deno";
 import { generateWebhookSecret } from "../_shared/webhook.ts";
+import { sendEmail, escapeHtml } from "../_shared/email.ts";
 
 function generateApiKey(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -24,7 +25,7 @@ serve(async (req) => {
   }
 
   try {
-    const { user, publisher, error: authError } = await authenticatePublisher(req);
+    const { user, publisher, role, error: authError } = await authenticatePublisher(req);
     if (!user) {
       return errorResponse(authError || "Unauthorized", 401);
     }
@@ -82,6 +83,17 @@ serve(async (req) => {
       try { body = await req.json(); } catch { body = {}; }
 
       const action = body.action;
+
+      // Role gating: owner-only actions
+      const ownerOnlyActions = [
+        "generate_api_key", "regenerate_api_key",
+        "connect_stripe", "stripe_dashboard",
+        "set_webhook", "remove_webhook",
+        "invite_member", "remove_member", "cancel_invitation",
+      ];
+      if (ownerOnlyActions.includes(action) && role !== "owner") {
+        return errorResponse("Only the account owner can perform this action", 403);
+      }
 
       if (action === "generate_api_key" || action === "regenerate_api_key") {
         const newKey = generateApiKey();
@@ -345,11 +357,219 @@ serve(async (req) => {
         });
       }
 
+      // Team: list members + pending invitations
+      if (action === "list_team") {
+        if (!publisher) {
+          return errorResponse("Publisher profile not found", 404);
+        }
+
+        // Get team members
+        const { data: members } = await supabase
+          .from("team_members")
+          .select("id, user_id, role, joined_at")
+          .eq("publisher_id", publisher.id)
+          .order("joined_at", { ascending: true });
+
+        // Enrich members with email from auth
+        const enrichedMembers = [];
+        for (const m of members || []) {
+          const { data: { user: memberUser } } = await supabase.auth.admin.getUserById(m.user_id);
+          enrichedMembers.push({
+            id: m.id,
+            user_id: m.user_id,
+            role: m.role,
+            email: memberUser?.email || "unknown",
+            joined_at: m.joined_at,
+          });
+        }
+
+        // Get pending invitations (not accepted, not expired)
+        const { data: invitations } = await supabase
+          .from("team_invitations")
+          .select("id, email, role, created_at, expires_at")
+          .eq("publisher_id", publisher.id)
+          .is("accepted_at", null)
+          .gt("expires_at", new Date().toISOString())
+          .order("created_at", { ascending: false });
+
+        return successResponse({
+          members: enrichedMembers,
+          invitations: invitations || [],
+          current_user_role: role,
+        });
+      }
+
+      // Team: invite a new member
+      if (action === "invite_member") {
+        if (!publisher) {
+          return errorResponse("Publisher profile not found", 404);
+        }
+
+        const email = (body.email || "").trim().toLowerCase();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return errorResponse("Valid email is required");
+        }
+
+        // Cannot invite self
+        if (email === user.email?.toLowerCase()) {
+          return errorResponse("You cannot invite yourself");
+        }
+
+        // Check if already a member
+        const { data: existingUsers } = await supabase.auth.admin.listUsers();
+        const existingUser = (existingUsers?.users || []).find(
+          (u: any) => u.email?.toLowerCase() === email
+        );
+        if (existingUser) {
+          const { data: existingMember } = await supabase
+            .from("team_members")
+            .select("id")
+            .eq("publisher_id", publisher.id)
+            .eq("user_id", existingUser.id)
+            .single();
+          if (existingMember) {
+            return errorResponse("This user is already a team member");
+          }
+        }
+
+        // Generate token
+        const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+        const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+        // Insert invitation (UNIQUE constraint will prevent duplicates)
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        const { error: insertErr } = await supabase
+          .from("team_invitations")
+          .insert({
+            publisher_id: publisher.id,
+            email,
+            role: "member",
+            token,
+            invited_by: user.id,
+            expires_at: expiresAt,
+          });
+
+        if (insertErr) {
+          if (insertErr.code === "23505") {
+            return errorResponse("An invitation for this email is already pending");
+          }
+          console.error("[publisher-profile] Invite insert error:", insertErr.message);
+          return errorResponse("Failed to create invitation", 500);
+        }
+
+        // Send invite email
+        const frontendUrl = Deno.env.get("FRONTEND_URL") || "https://opedd.com";
+        const inviteLink = `${frontendUrl}/invite/${token}`;
+        const safePublisher = escapeHtml(publisher.name || "A publisher");
+
+        await sendEmail({
+          to: email,
+          subject: `You've been invited to join ${publisher.name} on Opedd`,
+          html: `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+<div style="max-width:600px;margin:0 auto;background:#ffffff">
+  <div style="background:#040042;padding:40px 32px;text-align:center">
+    <p style="margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:3px;color:rgba(255,255,255,0.5)">Opedd Protocol</p>
+    <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700">Team Invitation</h1>
+  </div>
+  <div style="padding:32px">
+    <p style="font-size:16px;color:#111827;margin:0 0 16px">You've been invited to join <strong>${safePublisher}</strong> on Opedd as a team member.</p>
+    <p style="font-size:14px;color:#6b7280;margin:0 0 24px">As a team member, you'll be able to view the dashboard, manage content, and see transactions.</p>
+    <div style="text-align:center;margin:32px 0">
+      <a href="${inviteLink}" style="display:inline-block;background:#4A26ED;color:#ffffff;padding:14px 40px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Accept Invitation</a>
+    </div>
+    <p style="font-size:12px;color:#9ca3af;margin:0;text-align:center">This invitation expires in 7 days.</p>
+  </div>
+  <div style="padding:24px 32px;background:#fafafa;border-top:1px solid #e5e7eb;text-align:center">
+    <p style="margin:0;font-size:12px;color:#9ca3af">Powered by <span style="color:#040042;font-weight:600">Opedd Protocol</span></p>
+  </div>
+</div>
+</body>
+</html>`,
+        });
+
+        console.log(`[publisher-profile] Invite sent to ${email} for publisher ${publisher.id}`);
+        return successResponse({ invited: true, email, expires_at: expiresAt });
+      }
+
+      // Team: remove a member
+      if (action === "remove_member") {
+        if (!publisher) {
+          return errorResponse("Publisher profile not found", 404);
+        }
+
+        const memberId = body.member_id;
+        if (!memberId) {
+          return errorResponse("member_id is required");
+        }
+
+        // Verify member exists and is not an owner
+        const { data: member } = await supabase
+          .from("team_members")
+          .select("id, role, user_id")
+          .eq("id", memberId)
+          .eq("publisher_id", publisher.id)
+          .single();
+
+        if (!member) {
+          return errorResponse("Member not found", 404);
+        }
+
+        if (member.role === "owner") {
+          return errorResponse("Cannot remove the account owner");
+        }
+
+        const { error: deleteErr } = await supabase
+          .from("team_members")
+          .delete()
+          .eq("id", memberId);
+
+        if (deleteErr) {
+          console.error("[publisher-profile] Remove member error:", deleteErr.message);
+          return errorResponse("Failed to remove member", 500);
+        }
+
+        console.log(`[publisher-profile] Removed member ${memberId} from publisher ${publisher.id}`);
+        return successResponse({ removed: true });
+      }
+
+      // Team: cancel a pending invitation
+      if (action === "cancel_invitation") {
+        if (!publisher) {
+          return errorResponse("Publisher profile not found", 404);
+        }
+
+        const invitationId = body.invitation_id;
+        if (!invitationId) {
+          return errorResponse("invitation_id is required");
+        }
+
+        const { error: deleteErr } = await supabase
+          .from("team_invitations")
+          .delete()
+          .eq("id", invitationId)
+          .eq("publisher_id", publisher.id);
+
+        if (deleteErr) {
+          console.error("[publisher-profile] Cancel invitation error:", deleteErr.message);
+          return errorResponse("Failed to cancel invitation", 500);
+        }
+
+        console.log(`[publisher-profile] Cancelled invitation ${invitationId} for publisher ${publisher.id}`);
+        return successResponse({ cancelled: true });
+      }
+
       return errorResponse("Unknown action");
     }
 
-    // PATCH — update publisher profile
+    // PATCH — update publisher profile (owner-only)
     if (req.method === "PATCH") {
+      if (role !== "owner") {
+        return errorResponse("Only the account owner can update the profile", 403);
+      }
+
       let body;
       try { body = await req.json(); } catch {
         return errorResponse("Invalid JSON");
@@ -388,7 +608,7 @@ serve(async (req) => {
       const { data: updated, error: updateError } = await supabase
         .from("publishers")
         .update(updatePayload)
-        .eq("user_id", user.id)
+        .eq("id", publisher!.id)
         .select("id, name, default_human_price, default_ai_price, website_url, description")
         .single();
 
