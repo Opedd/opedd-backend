@@ -7,26 +7,53 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  if (req.method !== "POST") {
-    return errorResponse("Method not allowed", 405);
-  }
+  const supabase = createServiceClient();
 
   try {
-    // Require auth
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return errorResponse("No authorization token provided", 401);
+    // GET — public lookup: return invitation details by token (no auth needed)
+    if (req.method === "GET") {
+      const url = new URL(req.url);
+      const inviteToken = url.searchParams.get("token");
+      if (!inviteToken) {
+        return errorResponse("Token query parameter is required");
+      }
+
+      const { data: invitation, error: lookupErr } = await supabase
+        .from("team_invitations")
+        .select("id, publisher_id, email, expires_at, accepted_at")
+        .eq("token", inviteToken)
+        .single();
+
+      if (lookupErr || !invitation) {
+        return errorResponse("Invalid invitation token", 404);
+      }
+
+      // Get publisher name
+      const { data: pub } = await supabase
+        .from("publishers")
+        .select("name")
+        .eq("id", invitation.publisher_id)
+        .single();
+
+      const expired = new Date(invitation.expires_at) < new Date();
+      const accepted = !!invitation.accepted_at;
+
+      return successResponse({
+        email: invitation.email,
+        publisher_name: pub?.name || "Unknown",
+        expired,
+        accepted,
+      });
     }
 
-    const supabase = createServiceClient();
-    const token = authHeader.substring(7).trim();
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return errorResponse("Invalid or expired token", 401);
+    if (req.method !== "POST") {
+      return errorResponse("Method not allowed", 405);
     }
 
-    // Read invite token from body
+    // POST — two modes:
+    // 1. With auth header → existing user accepting invite
+    // 2. Without auth, with password → new user signup + accept
+
     let body;
     try { body = await req.json(); } catch { body = {}; }
 
@@ -46,71 +73,142 @@ serve(async (req) => {
       return errorResponse("Invalid invitation token", 404);
     }
 
-    // Validate: not already accepted
     if (invitation.accepted_at) {
       return errorResponse("This invitation has already been accepted");
     }
 
-    // Validate: not expired
     if (new Date(invitation.expires_at) < new Date()) {
       return errorResponse("This invitation has expired");
     }
 
-    // Validate: email matches (case-insensitive)
-    if (invitation.email.toLowerCase() !== user.email?.toLowerCase()) {
-      return errorResponse("This invitation was sent to a different email address", 403);
-    }
+    const authHeader = req.headers.get("Authorization");
+    const hasAuth = authHeader && authHeader.startsWith("Bearer ") && authHeader.length > 20;
 
-    // Check if already a member
-    const { data: existingMember } = await supabase
-      .from("team_members")
-      .select("id")
-      .eq("publisher_id", invitation.publisher_id)
-      .eq("user_id", user.id)
-      .single();
+    // --- Mode 1: Authenticated user accepting invite ---
+    if (hasAuth) {
+      const token = authHeader!.substring(7).trim();
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      if (authError || !user) {
+        return errorResponse("Invalid or expired token", 401);
+      }
 
-    if (existingMember) {
-      // Mark invitation as accepted even if already a member
+      // Validate email matches
+      if (invitation.email.toLowerCase() !== user.email?.toLowerCase()) {
+        return errorResponse("This invitation was sent to a different email address", 403);
+      }
+
+      // Check if already a member
+      const { data: existingMember } = await supabase
+        .from("team_members")
+        .select("id")
+        .eq("publisher_id", invitation.publisher_id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (existingMember) {
+        await supabase
+          .from("team_invitations")
+          .update({ accepted_at: new Date().toISOString() })
+          .eq("id", invitation.id);
+        return successResponse({ joined: true, already_member: true });
+      }
+
+      // Insert team member
+      const { error: insertErr } = await supabase
+        .from("team_members")
+        .insert({
+          publisher_id: invitation.publisher_id,
+          user_id: user.id,
+          role: invitation.role || "member",
+        });
+
+      if (insertErr) {
+        console.error("[accept-invite] Insert error:", insertErr.message);
+        return errorResponse("Failed to join team", 500);
+      }
+
       await supabase
         .from("team_invitations")
         .update({ accepted_at: new Date().toISOString() })
         .eq("id", invitation.id);
 
-      return successResponse({ joined: true, already_member: true });
+      const { data: pub } = await supabase
+        .from("publishers")
+        .select("name")
+        .eq("id", invitation.publisher_id)
+        .single();
+
+      console.log(`[accept-invite] User ${user.id} joined publisher ${invitation.publisher_id}`);
+      return successResponse({
+        joined: true,
+        publisher_name: pub?.name || "Unknown",
+      });
     }
 
-    // Insert into team_members
+    // --- Mode 2: No auth — signup with password + accept ---
+    const password = body.password;
+    if (!password || typeof password !== "string" || password.length < 6) {
+      return errorResponse("Password is required (minimum 6 characters)");
+    }
+
+    const invitedEmail = invitation.email.toLowerCase();
+
+    // Check if user already exists
+    const { data: existingUsers } = await supabase.auth.admin.listUsers();
+    const existingUser = (existingUsers?.users || []).find(
+      (u: any) => u.email?.toLowerCase() === invitedEmail
+    );
+
+    if (existingUser) {
+      return errorResponse("An account with this email already exists. Please log in instead.", 409);
+    }
+
+    // Create user with email_confirm: true (they proved ownership by clicking the invite link)
+    const { data: newUserData, error: createErr } = await supabase.auth.admin.createUser({
+      email: invitedEmail,
+      password,
+      email_confirm: true,
+    });
+
+    if (createErr || !newUserData?.user) {
+      console.error("[accept-invite] Create user error:", createErr?.message);
+      return errorResponse("Failed to create account", 500);
+    }
+
+    const newUser = newUserData.user;
+
+    // Insert team member
     const { error: insertErr } = await supabase
       .from("team_members")
       .insert({
         publisher_id: invitation.publisher_id,
-        user_id: user.id,
+        user_id: newUser.id,
         role: invitation.role || "member",
-        invited_by: null, // we could look up invited_by from invitation but not critical
       });
 
     if (insertErr) {
-      console.error("[accept-invite] Insert error:", insertErr.message);
-      return errorResponse("Failed to join team", 500);
+      console.error("[accept-invite] Insert member error:", insertErr.message);
+      return errorResponse("Account created but failed to join team. Please log in and try again.", 500);
     }
 
-    // Mark invitation as accepted
+    // Mark invitation accepted
     await supabase
       .from("team_invitations")
       .update({ accepted_at: new Date().toISOString() })
       .eq("id", invitation.id);
 
-    // Get publisher name for response
     const { data: pub } = await supabase
       .from("publishers")
       .select("name")
       .eq("id", invitation.publisher_id)
       .single();
 
-    console.log(`[accept-invite] User ${user.id} joined publisher ${invitation.publisher_id}`);
+    console.log(`[accept-invite] New user ${newUser.id} created and joined publisher ${invitation.publisher_id}`);
     return successResponse({
       joined: true,
+      created: true,
       publisher_name: pub?.name || "Unknown",
+      email: invitedEmail,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
