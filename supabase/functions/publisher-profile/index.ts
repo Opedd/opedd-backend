@@ -3,7 +3,7 @@ import { corsHeaders, errorResponse, successResponse } from "../_shared/cors.ts"
 import { createServiceClient, authenticatePublisher } from "../_shared/auth.ts";
 import Stripe from "https://esm.sh/stripe@17?target=deno";
 import { generateWebhookSecret } from "../_shared/webhook.ts";
-import { sendEmail, escapeHtml } from "../_shared/email.ts";
+import { sendEmail, escapeHtml, buildBrandedEmail } from "../_shared/email.ts";
 
 function generateApiKey(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -500,29 +500,15 @@ serve(async (req) => {
         await sendEmail({
           to: email,
           subject: `You've been invited to join ${publisher.name} on Opedd`,
-          html: `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-<div style="max-width:600px;margin:0 auto;background:#ffffff">
-  <div style="background:#040042;padding:40px 32px;text-align:center">
-    <p style="margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:3px;color:rgba(255,255,255,0.5)">Opedd Protocol</p>
-    <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700">Team Invitation</h1>
-  </div>
-  <div style="padding:32px">
-    <p style="font-size:16px;color:#111827;margin:0 0 16px">You've been invited to join <strong>${safePublisher}</strong> on Opedd as a team member.</p>
-    <p style="font-size:14px;color:#6b7280;margin:0 0 24px">As a team member, you'll be able to view the dashboard, manage content, and see transactions.</p>
-    <div style="text-align:center;margin:32px 0">
-      <a href="${inviteLink}" style="display:inline-block;background:#4A26ED;color:#ffffff;padding:14px 40px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">Accept Invitation</a>
+          html: buildBrandedEmail("Team Invitation", `
+    <p style="margin:0 0 8px;font-size:16px;color:#1f2937;font-weight:600">You're invited!</p>
+    <p style="margin:0 0 24px;font-size:14px;color:#6b7280;line-height:1.7"><strong>${safePublisher}</strong> has invited you to join their team on Opedd as a member. You'll be able to view the dashboard, manage content, and see transactions.</p>
+    <div style="text-align:center;padding:8px 0 24px">
+      <a href="${inviteLink}" style="display:inline-block;background:linear-gradient(135deg,#4A26ED 0%,#7C3AED 100%);color:#ffffff;padding:14px 44px;border-radius:12px;text-decoration:none;font-weight:600;font-size:15px;letter-spacing:0.2px;box-shadow:0 4px 14px rgba(74,38,237,0.3)">Accept Invitation</a>
     </div>
-    <p style="font-size:12px;color:#9ca3af;margin:0;text-align:center">This invitation expires in 7 days.</p>
-  </div>
-  <div style="padding:24px 32px;background:#fafafa;border-top:1px solid #e5e7eb;text-align:center">
-    <p style="margin:0;font-size:12px;color:#9ca3af">Powered by <span style="color:#040042;font-weight:600">Opedd Protocol</span></p>
-  </div>
-</div>
-</body>
-</html>`,
+    <div style="background:#f9fafb;border-radius:10px;padding:16px 20px">
+      <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center">This invitation expires in 7 days. If you weren't expecting this, you can safely ignore it.</p>
+    </div>`),
         });
 
         console.log(`[publisher-profile] Invite sent to ${email} for publisher ${publisher.id}`);

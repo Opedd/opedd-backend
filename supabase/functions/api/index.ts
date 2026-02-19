@@ -4,7 +4,7 @@ import { createServiceClient } from "../_shared/auth.ts";
 import { generateUniqueLicenseKey } from "../_shared/license-key.ts";
 import { isRateLimited, rateLimitResponse } from "../_shared/rate-limit.ts";
 import { notifyPublisherWebhook } from "../_shared/webhook.ts";
-import { buildHandshakeEmail, sendEmail } from "../_shared/email.ts";
+import { buildHandshakeEmail, buildBrandedEmail, sendEmail } from "../_shared/email.ts";
 import { logEvent } from "../_shared/events.ts";
 import { registerOnChain, verifyOnChain } from "../_shared/blockchain.ts";
 
@@ -601,29 +601,32 @@ async function handleBatchPurchase(publisher: any, req: Request) {
     const successItems = results.filter((r: any) => r.license_key);
 
     const licenseRows = successItems.map((r: any) =>
-      `<tr><td style="padding:6px 12px;border:1px solid #e2e8f0">${r.title}</td><td style="padding:6px 12px;border:1px solid #e2e8f0">${r.license_type === "human" ? "Human" : "AI"}</td><td style="padding:6px 12px;border:1px solid #e2e8f0"><code>${r.license_key}</code></td><td style="padding:6px 12px;border:1px solid #e2e8f0">$${Number(r.amount).toFixed(2)}</td></tr>`
+      `<tr>
+        <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:14px;color:#1f2937">${r.title}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:13px;color:#6b7280">${r.license_type === "human" ? "Human" : "AI"}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-family:'Courier New',monospace;font-size:12px;color:#040042;font-weight:600">${r.license_key}</td>
+        <td style="padding:10px 12px;border-bottom:1px solid #f3f4f6;font-size:14px;color:#1f2937;font-weight:600">$${Number(r.amount).toFixed(2)}</td>
+      </tr>`
     ).join("");
 
-    const html = `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h2 style="color:#1a202c">Batch License Confirmation</h2>
-        <p>You have been issued <strong>${successCount}</strong> license${successCount > 1 ? "s" : ""} via the Opedd Protocol.</p>
-        ${buyer_name ? `<p><strong>Licensee:</strong> ${buyer_name}${buyer_organization ? ` (${buyer_organization})` : ""}</p>` : ""}
-        <p><strong>Total:</strong> $${totalAmount.toFixed(2)} USD</p>
-        <table style="border-collapse:collapse;width:100%;margin:16px 0">
-          <thead><tr style="background:#f7fafc">
-            <th style="padding:6px 12px;border:1px solid #e2e8f0;text-align:left">Article</th>
-            <th style="padding:6px 12px;border:1px solid #e2e8f0;text-align:left">Type</th>
-            <th style="padding:6px 12px;border:1px solid #e2e8f0;text-align:left">License Key</th>
-            <th style="padding:6px 12px;border:1px solid #e2e8f0;text-align:left">Amount</th>
-          </tr></thead>
-          <tbody>${licenseRows}</tbody>
-        </table>
-        <p>Verify any license: <a href="${frontendUrl}/verify">opedd.com/verify</a></p>
-        <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
-        <p style="font-size:12px;color:#718096">Issued by the Opedd Protocol</p>
+    const html = buildBrandedEmail("Batch License Confirmation", `
+      <p style="margin:0 0 8px;font-size:16px;color:#1f2937;font-weight:600">${successCount} license${successCount > 1 ? "s" : ""} issued</p>
+      ${buyer_name ? `<p style="margin:0 0 4px;font-size:14px;color:#6b7280"><strong>Licensee:</strong> ${buyer_name}${buyer_organization ? ` (${buyer_organization})` : ""}</p>` : ""}
+      <p style="margin:0 0 24px;font-size:14px;color:#6b7280"><strong>Total:</strong> $${totalAmount.toFixed(2)} USD</p>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#f9fafb">
+          <th style="padding:10px 12px;text-align:left;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #f0f0f5">Article</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #f0f0f5">Type</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #f0f0f5">License Key</th>
+          <th style="padding:10px 12px;text-align:left;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #f0f0f5">Amount</th>
+        </tr></thead>
+        <tbody>${licenseRows}</tbody>
+      </table>
+      <div style="text-align:center;padding:24px 0 8px">
+        <a href="${frontendUrl}/verify" style="display:inline-block;background:linear-gradient(135deg,#4A26ED 0%,#7C3AED 100%);color:#ffffff;padding:14px 44px;border-radius:12px;text-decoration:none;font-weight:600;font-size:15px;letter-spacing:0.2px;box-shadow:0 4px 14px rgba(74,38,237,0.3)">Verify Licenses</a>
       </div>
-    `;
+      <p style="margin:12px 0 0;font-size:12px;color:#9ca3af;text-align:center">Enter any license key at opedd.com/verify to check authenticity.</p>
+    `);
 
     const emailSent = await sendEmail({
       to: buyer_email,
