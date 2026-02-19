@@ -115,11 +115,14 @@ function hashLicenseKey(licenseKey: string): Hex {
   return keccak256(toHex(licenseKey));
 }
 
-// For contentHash and documentHash we use a placeholder (zero hash)
-// since we don't have the actual content/document at this point.
-// These can be updated later via a separate mechanism.
 const ZERO_HASH: Hex = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const ZERO_ADDRESS: Hex = "0x0000000000000000000000000000000000000000";
+
+// Hash article data to produce a meaningful contentHash
+function hashContent(articleId: string, articleTitle?: string, sourceUrl?: string): Hex {
+  const content = `${articleId}:${articleTitle || ""}:${sourceUrl || ""}`;
+  return keccak256(toHex(content));
+}
 
 // ── Public API ────────────────────────────────────────────────────────
 
@@ -130,6 +133,8 @@ export interface RegisterParams {
   intendedUse: string | null;
   transactionId: string;
   publisherId: string | null;
+  articleTitle?: string;
+  sourceUrl?: string;
 }
 
 /**
@@ -150,6 +155,13 @@ export async function registerOnChain(
     const ltUint8 = licenseTypeToUint8(params.licenseType);
     const iuUint8 = intendedUseToUint8(params.intendedUse);
 
+    // Build content hash from article data (or fallback to zero)
+    const contentHash = (params.articleTitle || params.sourceUrl)
+      ? hashContent(params.articleId, params.articleTitle, params.sourceUrl)
+      : ZERO_HASH;
+    // Document hash = hash of articleId (unique per article)
+    const documentHash = keccak256(toHex(params.articleId));
+
     // Send the transaction
     const txHash = await walletClient!.writeContract({
       address: contractAddress,
@@ -157,11 +169,11 @@ export async function registerOnChain(
       functionName: "register",
       args: [
         keyHash,
-        ZERO_HASH,        // contentHash placeholder
-        ZERO_HASH,        // documentHash placeholder
+        contentHash,
+        documentHash,
         ltUint8,
         iuUint8,
-        ZERO_ADDRESS,     // publisher address placeholder
+        ZERO_ADDRESS,     // publisher address — requires publisher wallet, skip for now
       ],
     });
 

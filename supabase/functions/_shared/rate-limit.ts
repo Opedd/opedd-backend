@@ -1,4 +1,5 @@
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders } from "./cors.ts";
 
 // Database-backed rate limiting via check_rate_limit() SQL function.
 // Fail-closed: blocks on DB error to prevent abuse.
@@ -18,4 +19,19 @@ export async function isRateLimited(
     return true; // Fail closed — block on error
   }
   return data === true;
+}
+
+// Build a 429 response with Retry-After header
+export function rateLimitResponse(message: string, retryAfterSeconds: number): Response {
+  return new Response(
+    JSON.stringify({ success: false, error: message }),
+    {
+      status: 429,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSeconds),
+      },
+    }
+  );
 }

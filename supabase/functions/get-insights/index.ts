@@ -19,6 +19,30 @@ serve(async (req) => {
 
     const supabase = createServiceClient();
 
+    // Parse query params for date range
+    const url = new URL(req.url);
+    const daysParam = url.searchParams.get("days");
+    const fromParam = url.searchParams.get("from");
+    const toParam = url.searchParams.get("to");
+
+    // Determine date range: ?days=7|30|90 or ?from=YYYY-MM-DD&to=YYYY-MM-DD
+    let days = 30;
+    let fromDate: Date;
+    let toDate = new Date();
+
+    if (fromParam && toParam) {
+      fromDate = new Date(fromParam);
+      toDate = new Date(toParam);
+      toDate.setHours(23, 59, 59, 999);
+      days = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
+    } else {
+      if (daysParam) days = Math.min(Math.max(Number(daysParam) || 30, 1), 365);
+      fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+    }
+
+    const fromISO = fromDate.toISOString();
+
     // Get all publisher's articles
     const { data: articles } = await supabase
       .from("licenses")
@@ -31,18 +55,20 @@ serve(async (req) => {
         revenueByDay: [],
         topArticles: [],
         recentActivity: [],
+        period: { days, from: fromISO, to: toDate.toISOString() },
       });
     }
 
     const articleIds = articles.map((a: any) => a.id);
     const articleMap = new Map(articles.map((a: any) => [a.id, a]));
 
-    // Get all completed transactions
+    // Get completed transactions within date range
     const { data: transactions } = await supabase
       .from("license_transactions")
       .select("id, article_id, amount, license_type, created_at, buyer_email, buyer_name, status")
       .in("article_id", articleIds)
       .eq("status", "completed")
+      .gte("created_at", fromISO)
       .order("created_at", { ascending: false });
 
     const txs = transactions || [];
@@ -65,11 +91,10 @@ serve(async (req) => {
       verifiedArticles: articles.filter((a: any) => a.verification_status === "verified").length,
     };
 
-    // Revenue by day (last 30 days)
+    // Revenue by day
     const revenueByDay: Record<string, { revenue: number; human: number; ai: number; count: number }> = {};
-    for (let i = 0; i < 30; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+    for (let i = 0; i < days; i++) {
+      const d = new Date(fromDate.getTime() + i * 86400000);
       const key = d.toISOString().split("T")[0];
       revenueByDay[key] = { revenue: 0, human: 0, ai: 0, count: 0 };
     }

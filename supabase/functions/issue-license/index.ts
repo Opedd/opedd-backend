@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, errorResponse, successResponse } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/auth.ts";
 import { generateUniqueLicenseKey } from "../_shared/license-key.ts";
-import { isRateLimited } from "../_shared/rate-limit.ts";
+import { isRateLimited, rateLimitResponse } from "../_shared/rate-limit.ts";
 import { buildHandshakeEmail, sendEmail } from "../_shared/email.ts";
 import { logEvent } from "../_shared/events.ts";
 import { notifyPublisherWebhook } from "../_shared/webhook.ts";
@@ -49,7 +49,7 @@ serve(async (req) => {
 
     // Database-backed rate limit
     if (await isRateLimited(supabase, `issue-license:${buyer_email}`, 5, 60)) {
-      return errorResponse("Too many requests. Try again later.", 429);
+      return rateLimitResponse("Too many requests. Try again later.", 60);
     }
 
     // Fetch article + price + source_url
@@ -115,6 +115,8 @@ serve(async (req) => {
       intendedUse: intended_use || null,
       transactionId: txRow!.id,
       publisherId: article.publisher_id,
+      articleTitle: article.title,
+      sourceUrl: article.source_url || undefined,
     }).catch(err => console.error("[issue-license] On-chain error:", err));
 
     // Fetch publisher name for email + notification

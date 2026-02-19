@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@17?target=deno";
 import { corsHeaders, errorResponse, successResponse } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/auth.ts";
-import { isRateLimited } from "../_shared/rate-limit.ts";
+import { isRateLimited, rateLimitResponse } from "../_shared/rate-limit.ts";
 import { logEvent } from "../_shared/events.ts";
 
 serve(async (req) => {
@@ -46,7 +46,7 @@ serve(async (req) => {
 
     // Rate limit: 10 checkouts per email per hour
     if (await isRateLimited(supabase, `create-checkout:${buyer_email}`, 10, 3600)) {
-      return errorResponse("Too many checkout attempts. Try again later.", 429);
+      return rateLimitResponse("Too many checkout attempts. Try again later.", 3600);
     }
 
     // Fetch article + price

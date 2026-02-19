@@ -28,7 +28,7 @@ export function generateWebhookSecret(): string {
   return "whsec_" + Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Deliver a webhook to a publisher
+// Deliver a webhook to a publisher with retry (up to 3 attempts with backoff)
 export async function deliverWebhook(
   supabase: SupabaseClient,
   publisherId: string,
@@ -54,7 +54,7 @@ export async function deliverWebhook(
       event_type: event,
       payload,
       status: "pending",
-      attempts: 1,
+      attempts: 0,
       last_attempt_at: new Date().toISOString(),
     })
     .select("id")
@@ -64,52 +64,69 @@ export async function deliverWebhook(
     console.error("[webhook] Failed to log delivery:", insertErr.message);
   }
 
-  try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Opedd-Signature": signature,
-        "X-Opedd-Event": event,
-        "X-Opedd-Timestamp": payload.timestamp,
-        "User-Agent": "Opedd-Webhook/1.0",
-      },
-      body,
-      signal: AbortSignal.timeout(10000), // 10s timeout
-    });
+  const MAX_ATTEMPTS = 3;
+  const BACKOFF_MS = [0, 5000, 30000]; // immediate, 5s, 30s
 
-    const success = res.status >= 200 && res.status < 300;
-
-    if (delivery?.id) {
-      await supabase
-        .from("webhook_deliveries")
-        .update({
-          status: success ? "delivered" : "failed",
-          status_code: res.status,
-        })
-        .eq("id", delivery.id);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Wait for backoff delay (skip on first attempt)
+    if (attempt > 1) {
+      await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt - 1] || 30000));
     }
 
-    if (success) {
-      console.log(`[webhook] Delivered ${event} to ${webhookUrl} (${res.status})`);
-    } else {
-      console.error(`[webhook] Failed ${event} to ${webhookUrl} (${res.status})`);
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Opedd-Signature": signature,
+          "X-Opedd-Event": event,
+          "X-Opedd-Timestamp": payload.timestamp,
+          "User-Agent": "Opedd-Webhook/1.0",
+        },
+        body,
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const success = res.status >= 200 && res.status < 300;
+
+      if (delivery?.id) {
+        await supabase
+          .from("webhook_deliveries")
+          .update({
+            status: success ? "delivered" : (attempt < MAX_ATTEMPTS ? "pending" : "failed"),
+            status_code: res.status,
+            attempts: attempt,
+            last_attempt_at: new Date().toISOString(),
+          })
+          .eq("id", delivery.id);
+      }
+
+      if (success) {
+        console.log(`[webhook] Delivered ${event} to ${webhookUrl} (${res.status}, attempt ${attempt})`);
+        return true;
+      }
+
+      console.warn(`[webhook] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${event} to ${webhookUrl} (${res.status})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.warn(`[webhook] Attempt ${attempt}/${MAX_ATTEMPTS} error for ${event}: ${msg}`);
+
+      if (delivery?.id) {
+        await supabase
+          .from("webhook_deliveries")
+          .update({
+            status: attempt < MAX_ATTEMPTS ? "pending" : "failed",
+            status_code: 0,
+            attempts: attempt,
+            last_attempt_at: new Date().toISOString(),
+          })
+          .eq("id", delivery.id);
+      }
     }
-
-    return success;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    console.error(`[webhook] Delivery error for ${event}:`, msg);
-
-    if (delivery?.id) {
-      await supabase
-        .from("webhook_deliveries")
-        .update({ status: "failed", status_code: 0 })
-        .eq("id", delivery.id);
-    }
-
-    return false;
   }
+
+  console.error(`[webhook] All ${MAX_ATTEMPTS} attempts failed for ${event} to ${webhookUrl}`);
+  return false;
 }
 
 // Check if a publisher has webhooks configured and deliver if so

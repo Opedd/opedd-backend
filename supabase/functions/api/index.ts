@@ -2,7 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, errorResponse, successResponse } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/auth.ts";
 import { generateUniqueLicenseKey } from "../_shared/license-key.ts";
-import { isRateLimited } from "../_shared/rate-limit.ts";
+import { isRateLimited, rateLimitResponse } from "../_shared/rate-limit.ts";
+import { notifyPublisherWebhook } from "../_shared/webhook.ts";
 import { buildHandshakeEmail, sendEmail } from "../_shared/email.ts";
 import { logEvent } from "../_shared/events.ts";
 import { registerOnChain, verifyOnChain } from "../_shared/blockchain.ts";
@@ -236,7 +237,7 @@ async function handlePurchase(publisher: any, req: Request) {
 
   // Rate limit: 30 purchases per API key per hour
   if (await isRateLimited(supabase, `api-purchase:${publisher.id}`, 30, 3600)) {
-    return errorResponse("Rate limit exceeded. Max 30 purchases per hour.", 429);
+    return rateLimitResponse("Rate limit exceeded. Max 30 purchases per hour.", 3600);
   }
 
   // Verify article belongs to this publisher
@@ -303,6 +304,8 @@ async function handlePurchase(publisher: any, req: Request) {
     intendedUse: intended_use || null,
     transactionId: txRow!.id,
     publisherId: publisher.id,
+    articleTitle: article.title,
+    sourceUrl: article.source_url || undefined,
   }).catch(err => console.error("[api] On-chain error:", err));
 
   // Log event
@@ -431,7 +434,7 @@ async function handleBatchPurchase(publisher: any, req: Request) {
 
   // Rate limit: 10 batch purchases per API key per hour
   if (await isRateLimited(supabase, `api-batch:${publisher.id}`, 10, 3600)) {
-    return errorResponse("Rate limit exceeded. Max 10 batch purchases per hour.", 429);
+    return rateLimitResponse("Rate limit exceeded. Max 10 batch purchases per hour.", 3600);
   }
 
   // Fetch all articles in one query
@@ -523,6 +526,8 @@ async function handleBatchPurchase(publisher: any, req: Request) {
       intendedUse: intended_use || null,
       transactionId: txRow!.id,
       publisherId: publisher.id,
+      articleTitle: article.title,
+      sourceUrl: article.source_url || undefined,
     }).catch(err => console.error("[api] Batch on-chain error:", err));
 
     // Log event
@@ -551,6 +556,44 @@ async function handleBatchPurchase(publisher: any, req: Request) {
   const failCount = results.filter((r: any) => r.error).length;
 
   console.log(`[api] Batch purchase: ${successCount} issued, ${failCount} failed, $${totalAmount} total for publisher ${publisher.id}`);
+
+  // Notify publisher (in-app + webhook) for each successful license
+  if (successCount > 0) {
+    // Fetch publisher for notifications
+    const { data: pubData } = await supabase
+      .from("publishers")
+      .select("user_id, name")
+      .eq("id", publisher.id)
+      .single();
+
+    if (pubData?.user_id) {
+      await supabase.from("notifications").insert({
+        user_id: pubData.user_id,
+        type: "license_sold",
+        title: `Batch Purchase — ${successCount} License${successCount > 1 ? "s" : ""}`,
+        message: `${successCount} license${successCount > 1 ? "s" : ""} issued via API for $${totalAmount.toFixed(2)}`,
+        metadata: { batch: true, count: successCount, total_amount: totalAmount, buyer_email, via: "programmatic_api" },
+      });
+    }
+
+    // Fire webhook for each issued license
+    const successItems = results.filter((r: any) => r.license_key);
+    for (const item of successItems) {
+      await notifyPublisherWebhook(supabase, publisher.id, "license.issued", {
+        license_key: item.license_key,
+        license_type: item.license_type,
+        article_id: item.article_id,
+        article_title: item.title,
+        amount: item.amount,
+        buyer_email,
+        buyer_name: buyer_name || null,
+        buyer_organization: buyer_organization || null,
+        intended_use: intended_use || null,
+        via: "programmatic_api",
+        batch: true,
+      });
+    }
+  }
 
   // Send summary email with all licenses
   if (successCount > 0) {

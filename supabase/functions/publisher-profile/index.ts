@@ -225,6 +225,43 @@ serve(async (req) => {
         });
       }
 
+      // Stripe Connect: get balance for connected account
+      if (action === "stripe_balance") {
+        if (!publisher) {
+          return errorResponse("Publisher profile not found", 404);
+        }
+
+        if (!publisher.stripe_account_id || !publisher.stripe_onboarding_complete) {
+          return successResponse({
+            available: 0,
+            pending: 0,
+            currency: "usd",
+          });
+        }
+
+        const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+        if (!stripeKey) {
+          return errorResponse("Stripe not configured", 500);
+        }
+
+        const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+
+        try {
+          const balance = await stripe.balance.retrieve({
+            stripeAccount: publisher.stripe_account_id,
+          });
+
+          const available = balance.available.reduce((sum: number, b: any) => sum + b.amount, 0) / 100;
+          const pending = balance.pending.reduce((sum: number, b: any) => sum + b.amount, 0) / 100;
+          const currency = balance.available[0]?.currency || "usd";
+
+          return successResponse({ available, pending, currency });
+        } catch (err) {
+          console.error("[publisher-profile] Stripe balance error:", err instanceof Error ? err.message : err);
+          return successResponse({ available: 0, pending: 0, currency: "usd" });
+        }
+      }
+
       // Webhook: set URL
       if (action === "set_webhook") {
         if (!publisher) {

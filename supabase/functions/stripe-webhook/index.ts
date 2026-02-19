@@ -134,6 +134,8 @@ serve(async (req) => {
         intendedUse: intendedUse || null,
         transactionId: tx.id,
         publisherId: publisherId || null,
+        articleTitle,
+        sourceUrl: articleUrl || undefined,
       }).catch(err => console.error("[stripe-webhook] On-chain error:", err));
 
       // Fetch publisher for notification + email

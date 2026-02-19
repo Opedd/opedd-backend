@@ -25,6 +25,7 @@ serve(async (req) => {
     const offset = Number(url.searchParams.get("offset")) || 0;
     const statusFilter = url.searchParams.get("status");
     const typeFilter = url.searchParams.get("type");
+    const searchQuery = url.searchParams.get("search");
 
     // Get publisher's article IDs
     const { data: articles } = await supabase
@@ -49,6 +50,10 @@ serve(async (req) => {
 
     if (statusFilter) query = query.eq("status", statusFilter);
     if (typeFilter) query = query.eq("license_type", typeFilter);
+    if (searchQuery) {
+      const term = `%${searchQuery}%`;
+      query = query.or(`buyer_email.ilike.${term},buyer_name.ilike.${term},license_key.ilike.${term}`);
+    }
 
     const { data: transactions, error: txError, count } = await query;
 
