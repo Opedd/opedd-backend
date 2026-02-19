@@ -415,20 +415,18 @@ serve(async (req) => {
           return errorResponse("You cannot invite yourself");
         }
 
-        // Check if already a member
-        const { data: existingUsers } = await supabase.auth.admin.listUsers();
-        const existingUser = (existingUsers?.users || []).find(
-          (u: any) => u.email?.toLowerCase() === email
-        );
-        if (existingUser) {
-          const { data: existingMember } = await supabase
-            .from("team_members")
-            .select("id")
-            .eq("publisher_id", publisher.id)
-            .eq("user_id", existingUser.id)
-            .single();
-          if (existingMember) {
-            return errorResponse("This user is already a team member");
+        // Check if already a team member by looking up existing members' emails
+        const { data: existingMembers } = await supabase
+          .from("team_members")
+          .select("user_id")
+          .eq("publisher_id", publisher.id);
+
+        if (existingMembers && existingMembers.length > 0) {
+          for (const m of existingMembers) {
+            const { data: { user: memberUser } } = await supabase.auth.admin.getUserById(m.user_id);
+            if (memberUser?.email?.toLowerCase() === email) {
+              return errorResponse("This user is already a team member");
+            }
           }
         }
 

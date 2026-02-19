@@ -147,31 +147,30 @@ serve(async (req) => {
 
     // --- Mode 2: No auth — signup with password + accept ---
     const password = body.password;
-    if (!password || typeof password !== "string" || password.length < 6) {
-      return errorResponse("Password is required (minimum 6 characters)");
+    if (!password || typeof password !== "string" || password.length < 8) {
+      return errorResponse("Password is required (minimum 8 characters)");
     }
 
     const invitedEmail = invitation.email.toLowerCase();
 
-    // Check if user already exists
-    const { data: existingUsers } = await supabase.auth.admin.listUsers();
-    const existingUser = (existingUsers?.users || []).find(
-      (u: any) => u.email?.toLowerCase() === invitedEmail
-    );
-
-    if (existingUser) {
-      return errorResponse("An account with this email already exists. Please log in instead.", 409);
-    }
-
-    // Create user with email_confirm: true (they proved ownership by clicking the invite link)
+    // Try to create user — if they already exist, createUser returns an error
+    // This avoids the O(n) listUsers() scan
     const { data: newUserData, error: createErr } = await supabase.auth.admin.createUser({
       email: invitedEmail,
       password,
       email_confirm: true,
     });
 
-    if (createErr || !newUserData?.user) {
-      console.error("[accept-invite] Create user error:", createErr?.message);
+    if (createErr) {
+      // User already exists — tell frontend to redirect to login
+      if (createErr.message?.includes("already been registered") || createErr.message?.includes("already exists")) {
+        return errorResponse("An account with this email already exists. Please log in instead.", 409);
+      }
+      console.error("[accept-invite] Create user error:", createErr.message);
+      return errorResponse("Failed to create account", 500);
+    }
+
+    if (!newUserData?.user) {
       return errorResponse("Failed to create account", 500);
     }
 
